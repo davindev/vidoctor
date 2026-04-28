@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.venv/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Data / models
+data/
+models/
+.cache/
+*.mp4
+*.mov
+*.wav
+*.mp3
+*.m4a
+
+# Tests / build
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# IDE / OS
+.vscode/
+.idea/
+.cursor/
+.DS_Store
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+.pyright/
+
+# MLflow / Langfuse local
+mlruns/
+mlflow.db
+
+# Streamlit
+.streamlit/secrets.toml
