@@ -14,12 +14,15 @@ def _stub_heavy_nodes(monkeypatch):
     async def _empty_words(_path: str):
         return []
 
-    async def _empty_dead_zones(_path: str, _transcript, _category):
+    async def _empty_events(_path: str, _transcript, _category):
         return []
 
     monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty_words)
     monkeypatch.setattr(
-        "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_dead_zones
+        "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_events
+    )
+    monkeypatch.setattr(
+        "vidoctor.vision.content_gap.detect_content_gap_events", _empty_events
     )
 
 

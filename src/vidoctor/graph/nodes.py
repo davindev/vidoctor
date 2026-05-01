@@ -53,10 +53,13 @@ async def detect_gaze(state: AnalysisState) -> dict:
 
 
 async def detect_content_gap(state: AnalysisState) -> dict:
-    if state.get("category") == "vlog":
-        return {"content_gaps": []}
-    await asyncio.sleep(0.01)
-    return {"content_gaps": []}
+    from vidoctor.vision.content_gap import detect_content_gap_events
+
+    transcript = state.get("transcript", [])
+    events = await detect_content_gap_events(
+        state["video_path"], transcript, state["category"]
+    )
+    return {"content_gaps": events}
 
 
 async def generate_suggestions(state: AnalysisState) -> dict:
