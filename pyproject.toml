@@ -16,6 +16,8 @@ dependencies = [
     "supabase>=2.10.0",
     "langfuse>=2.50.0",
     "whisperx>=3.8.5",
+    "opencv-python>=4.13.0.92",
+    "scikit-image>=0.26.0",
 ]
 
 [dependency-groups]

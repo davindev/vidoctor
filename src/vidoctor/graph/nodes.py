@@ -36,8 +36,13 @@ async def detect_cps(state: AnalysisState) -> dict:
 
 
 async def detect_dead_zone(state: AnalysisState) -> dict:
-    await asyncio.sleep(0.01)
-    return {"dead_zones": []}
+    from vidoctor.vision.dead_zone import detect_dead_zone_events
+
+    transcript = state.get("transcript", [])
+    events = await detect_dead_zone_events(
+        state["video_path"], transcript, state["category"]
+    )
+    return {"dead_zones": events}
 
 
 async def detect_gaze(state: AnalysisState) -> dict:

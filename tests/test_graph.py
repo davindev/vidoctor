@@ -5,17 +5,22 @@ from vidoctor.graph.state import Category
 
 
 @pytest.fixture(autouse=True)
-def _stub_transcribe(monkeypatch):
-    """그래프 토폴로지 테스트에선 실제 WhisperX 호출을 우회.
+def _stub_heavy_nodes(monkeypatch):
+    """그래프 토폴로지 테스트에선 미디어 파일·LLM·모델을 요구하는 노드를 우회.
 
-    transcribe 노드가 미디어 파일을 요구하지 않도록 transcribe_video를 빈 리스트로 대체.
-    실제 ASR 동작은 tests/test_audio.py(통합 테스트)에서 검증.
+    실제 ASR/SSIM 동작은 모듈 단위 통합 테스트(tests/test_audio.py, test_dead_zone.py)에서 검증.
     """
 
-    async def _empty(_path: str):
+    async def _empty_words(_path: str):
         return []
 
-    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty)
+    async def _empty_dead_zones(_path: str, _transcript, _category):
+        return []
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty_words)
+    monkeypatch.setattr(
+        "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_dead_zones
+    )
 
 
 def test_graph_compiles():
