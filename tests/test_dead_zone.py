@@ -5,11 +5,10 @@
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pytest
 
-from tests._helpers import _w
+from tests._helpers import _w, write_video
 from vidoctor.vision.dead_zone import (
     _detect_dead_zone_sync,
     _intersect_intervals,
@@ -91,20 +90,15 @@ def test_intersect_empty():
 
 def _make_test_video(path: Path, duration_sec: float = 10.0, static_from: float = 2.0) -> None:
     """`static_from`초 이후로 정적 프레임, 그 전엔 random noise."""
-    fps = 24
-    width, height = 320, 240
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
-    writer = cv2.VideoWriter(str(path), fourcc, fps, (width, height))
-    static_frame = np.ones((height, width, 3), dtype=np.uint8) * 128
     rng = np.random.default_rng(42)
-    for i in range(int(duration_sec * fps)):
-        t = i / fps
+    static_frame = np.ones((240, 320, 3), dtype=np.uint8) * 128
+
+    def frame_fn(_i: int, t: float) -> np.ndarray:
         if t >= static_from:
-            writer.write(static_frame)
-        else:
-            frame = rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
-            writer.write(frame)
-    writer.release()
+            return static_frame
+        return rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+
+    write_video(path, duration_sec, frame_fn)
 
 
 @pytest.fixture
