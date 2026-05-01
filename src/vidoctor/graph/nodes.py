@@ -15,7 +15,6 @@ from vidoctor.graph.state import AnalysisState
 
 
 async def transcribe(state: AnalysisState) -> dict:
-    # 지연 import — audio.transcribe ↔ graph.state 순환 회피 + torch lazy load
     from vidoctor.audio.transcribe import transcribe_video
 
     words = await transcribe_video(state["video_path"])
@@ -23,13 +22,17 @@ async def transcribe(state: AnalysisState) -> dict:
 
 
 async def detect_filler(state: AnalysisState) -> dict:
-    await asyncio.sleep(0.01)
-    return {"fillers": []}
+    from vidoctor.audio.filler import detect_filler_events
+
+    transcript = state.get("transcript", [])
+    return {"fillers": detect_filler_events(transcript)}
 
 
 async def detect_cps(state: AnalysisState) -> dict:
-    await asyncio.sleep(0.01)
-    return {"cps_anomalies": []}
+    from vidoctor.audio.cps import detect_cps_anomalies
+
+    transcript = state.get("transcript", [])
+    return {"cps_anomalies": detect_cps_anomalies(transcript)}
 
 
 async def detect_dead_zone(state: AnalysisState) -> dict:
