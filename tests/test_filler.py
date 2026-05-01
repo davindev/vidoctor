@@ -1,9 +1,5 @@
+from tests._helpers import _w
 from vidoctor.audio.filler import detect_filler_events
-from vidoctor.graph.state import Word
-
-
-def _w(text: str, start: float, end: float) -> Word:
-    return Word(text=text, start=start, end=end, score=0.9)
 
 
 def test_tier1_filler_detected():

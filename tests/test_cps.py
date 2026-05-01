@@ -1,9 +1,6 @@
+from tests._helpers import _w
 from vidoctor.audio.cps import detect_cps_anomalies
 from vidoctor.graph.state import Word
-
-
-def _w(text: str, start: float, end: float) -> Word:
-    return Word(text=text, start=start, end=end, score=0.9)
 
 
 def _normal_speech(duration_sec: float = 30.0, cps: float = 6.0) -> list[Word]:
