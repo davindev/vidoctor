@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     langfuse_public_key: SecretStr
     langfuse_secret_key: SecretStr
-    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_host: str
 
     huggingface_token: SecretStr | None = None
 
