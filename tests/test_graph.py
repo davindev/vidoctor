@@ -4,6 +4,20 @@ from vidoctor.graph import build_graph
 from vidoctor.graph.state import Category
 
 
+@pytest.fixture(autouse=True)
+def _stub_transcribe(monkeypatch):
+    """그래프 토폴로지 테스트에선 실제 WhisperX 호출을 우회.
+
+    transcribe 노드가 미디어 파일을 요구하지 않도록 transcribe_video를 빈 리스트로 대체.
+    실제 ASR 동작은 tests/test_audio.py(통합 테스트)에서 검증.
+    """
+
+    async def _empty(_path: str):
+        return []
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty)
+
+
 def test_graph_compiles():
     g = build_graph()
     assert g is not None

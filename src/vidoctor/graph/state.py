@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel
 
@@ -56,21 +56,22 @@ class Suggestion(BaseModel):
     finding_refs: list[str] = []
 
 
-class AnalysisState(TypedDict, total=False):
+class AnalysisState(TypedDict):
     """LangGraph 5차원 분석 state.
 
+    video_path / category는 진입 시점에 필수, 나머지는 노드가 차례로 채움.
     각 detection 노드가 자기 필드만 채우므로 reducer 불필요 (default replace).
     """
 
     video_path: str
     category: Category
 
-    transcript: list[Word]
+    transcript: NotRequired[list[Word]]
 
-    fillers: list[FillerEvent]
-    cps_anomalies: list[CPSEvent]
-    dead_zones: list[DeadZoneEvent]
-    gaze_issues: list[GazeEvent]
-    content_gaps: list[ContentGapEvent]
+    fillers: NotRequired[list[FillerEvent]]
+    cps_anomalies: NotRequired[list[CPSEvent]]
+    dead_zones: NotRequired[list[DeadZoneEvent]]
+    gaze_issues: NotRequired[list[GazeEvent]]
+    content_gaps: NotRequired[list[ContentGapEvent]]
 
-    suggestions: list[Suggestion]
+    suggestions: NotRequired[list[Suggestion]]

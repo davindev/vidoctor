@@ -1,7 +1,6 @@
-"""5차원 분석 노드 placeholder.
+"""5차원 분석 노드.
 
-각 모듈을 실제 구현할 때 이 파일의 함수를 채운다:
-- transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment)
+- transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment) ← 구현됨
 - detect_filler: 한국어 filler 사전 + 정규식
 - detect_cps: Net CPS 슬라이딩 윈도우 (5s/1s, pause >200ms 제외)
 - detect_dead_zone: OpenCV diff + SSIM + ASR 무발화
@@ -16,8 +15,11 @@ from vidoctor.graph.state import AnalysisState
 
 
 async def transcribe(state: AnalysisState) -> dict:
-    await asyncio.sleep(0.01)
-    return {"transcript": []}
+    # 지연 import — audio.transcribe ↔ graph.state 순환 회피 + torch lazy load
+    from vidoctor.audio.transcribe import transcribe_video
+
+    words = await transcribe_video(state["video_path"])
+    return {"transcript": words}
 
 
 async def detect_filler(state: AnalysisState) -> dict:

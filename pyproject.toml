@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "supabase>=2.10.0",
     "langfuse>=2.50.0",
+    "whisperx>=3.8.5",
 ]
 
 [dependency-groups]
@@ -48,3 +49,7 @@ include = ["src", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    # pyannote.audio가 torchcodec 로드 실패 시 경고 — fallback 동작하므로 무시
+    "ignore::UserWarning:pyannote.audio.core.io",
+]
