@@ -19,6 +19,7 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "scikit-image>=0.26.0",
     "scenedetect>=0.6.7.1",
+    "mediapipe>=0.10.18",
 ]
 
 [dependency-groups]

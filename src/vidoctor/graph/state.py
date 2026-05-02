@@ -4,6 +4,17 @@ from pydantic import BaseModel
 
 Category = Literal["lecture", "vlog", "other"]
 Severity = Literal["low", "mid", "high"]
+Direction = Literal[
+    "front",
+    "left",
+    "right",
+    "up",
+    "down",
+    "left_up",
+    "left_down",
+    "right_up",
+    "right_down",
+]
 
 
 class Word(BaseModel):
@@ -39,7 +50,7 @@ class DeadZoneEvent(BaseModel):
 class GazeEvent(BaseModel):
     start: float
     end: float
-    direction: str
+    direction: Direction
     severity: Severity = "low"
 
 

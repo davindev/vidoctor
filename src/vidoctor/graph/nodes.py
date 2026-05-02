@@ -4,7 +4,7 @@
 - detect_filler: 한국어 filler 사전 + 정규식
 - detect_cps: Net CPS 슬라이딩 윈도우 (5s/1s, pause >200ms 제외)
 - detect_dead_zone: OpenCV diff + SSIM + ASR 무발화
-- detect_gaze: MediaPipe Face Mesh iris + cv2.solvePnP head pose (강의만)
+- detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose (강의만)
 - detect_content_gap: GPT-4o Vision multi-image batch + ASR (강의·기타만)
 - generate_suggestions: GPT-4o-mini로 finding 통합 → 개선 제안
 """
@@ -46,10 +46,10 @@ async def detect_dead_zone(state: AnalysisState) -> dict:
 
 
 async def detect_gaze(state: AnalysisState) -> dict:
-    if state.get("category") != "lecture":
-        return {"gaze_issues": []}
-    await asyncio.sleep(0.01)
-    return {"gaze_issues": []}
+    from vidoctor.vision.gaze import detect_gaze_events
+
+    events = await detect_gaze_events(state["video_path"], state["category"])
+    return {"gaze_issues": events}
 
 
 async def detect_content_gap(state: AnalysisState) -> dict:

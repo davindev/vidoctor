@@ -17,6 +17,9 @@ def _stub_heavy_nodes(monkeypatch):
     async def _empty_events(_path: str, _transcript, _category):
         return []
 
+    async def _empty_gaze(_path: str, _category):
+        return []
+
     monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty_words)
     monkeypatch.setattr(
         "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_events
@@ -24,6 +27,7 @@ def _stub_heavy_nodes(monkeypatch):
     monkeypatch.setattr(
         "vidoctor.vision.content_gap.detect_content_gap_events", _empty_events
     )
+    monkeypatch.setattr("vidoctor.vision.gaze.detect_gaze_events", _empty_gaze)
 
 
 def test_graph_compiles():
