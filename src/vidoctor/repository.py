@@ -1,0 +1,258 @@
+"""Supabase repository: videos / analyses / findings CRUD.
+
+graph 결과를 영구 저장해 UI에서 '이전 분석 다시 보기' 가능. service_role key로
+단일 사용자 가정 (RLS 비활성, v1.1에서 인증 도입 시 정책 추가).
+
+5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 갖지만 findings
+테이블은 (start_sec/end_sec/severity/payload JSONB) 통합 스키마. 차원별 고유 필드는
+payload JSONB로 직렬화·역직렬화한다.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, cast
+
+from pydantic import BaseModel
+from supabase import Client, create_client
+
+from vidoctor.config import get_settings
+from vidoctor.graph.state import (
+    AnalysisState,
+    Category,
+    ContentGapEvent,
+    CPSEvent,
+    DeadZoneEvent,
+    FillerEvent,
+    GazeEvent,
+)
+
+# 차원 → state 필드 / event 클래스 매핑. state→DB / DB→state 양방향에서 사용.
+_DIM_TO_STATE_FIELD: dict[str, str] = {
+    "filler": "fillers",
+    "cps": "cps_anomalies",
+    "dead_zone": "dead_zones",
+    "gaze": "gaze_issues",
+    "content_gap": "content_gaps",
+}
+
+_DIM_TO_EVENT_CLASS: dict[str, type[BaseModel]] = {
+    "filler": FillerEvent,
+    "cps": CPSEvent,
+    "dead_zone": DeadZoneEvent,
+    "gaze": GazeEvent,
+    "content_gap": ContentGapEvent,
+}
+
+_STORAGE_BUCKET = "videos"
+
+
+@lru_cache(maxsize=1)
+def _client() -> Client:
+    """service_role key로 Supabase client 생성. 프로세스 수명 동안 1회 캐시."""
+    settings = get_settings()
+    return create_client(
+        settings.supabase_url,
+        settings.supabase_service_key.get_secret_value(),
+    )
+
+
+def _row_data(res: Any) -> list[dict[str, Any]]:
+    """Supabase APIResponse.data를 dict 리스트로 narrow.
+
+    SDK 타입은 list[JSON union]이지만 우리 스키마상 row는 항상 dict — schema 불변을
+    한 곳에서 cast로 표명. 호출자는 narrow된 타입 그대로 사용.
+    """
+    return cast(list[dict[str, Any]], res.data or [])
+
+
+def _first_row(res: Any) -> dict[str, Any]:
+    rows = _row_data(res)
+    if not rows:
+        raise RuntimeError("Supabase 응답에 데이터가 없습니다")
+    return rows[0]
+
+
+# ---------------------------------------------------------------------------
+# 순수 변환 — graph event ↔ findings row
+# ---------------------------------------------------------------------------
+
+
+_FINDING_TOP_FIELDS: frozenset[str] = frozenset({"start", "end", "severity"})
+
+
+def _event_to_row(analysis_id: str, dim: str, event: BaseModel) -> dict[str, Any]:
+    data = event.model_dump()
+    payload = {k: v for k, v in data.items() if k not in _FINDING_TOP_FIELDS}
+    return {
+        "analysis_id": analysis_id,
+        "dimension": dim,
+        "start_sec": data["start"],
+        "end_sec": data["end"],
+        "severity": data.get("severity"),
+        "payload": payload,
+    }
+
+
+def _row_to_event(row: dict[str, Any]) -> BaseModel:
+    cls = _DIM_TO_EVENT_CLASS[row["dimension"]]
+    kwargs: dict[str, Any] = {
+        "start": row["start_sec"],
+        "end": row["end_sec"],
+        **(row.get("payload") or {}),
+    }
+    # severity는 DB nullable. None이면 이벤트 클래스의 기본값 사용.
+    if row.get("severity") is not None:
+        kwargs["severity"] = row["severity"]
+    return cls(**kwargs)
+
+
+def _collect_finding_rows(analysis_id: str, state: AnalysisState) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for dim, field in _DIM_TO_STATE_FIELD.items():
+        events = state.get(field, []) or []  # type: ignore[literal-required]
+        for ev in events:
+            rows.append(_event_to_row(analysis_id, dim, ev))
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Storage / videos
+# ---------------------------------------------------------------------------
+
+
+def upload_video_file(local_path: Path, storage_name: str) -> str:
+    """영상을 Storage에 업로드 후 storage_path(`bucket/name`) 반환. 동일 이름이면 덮어씀."""
+    client = _client()
+    with local_path.open("rb") as f:
+        client.storage.from_(_STORAGE_BUCKET).upload(
+            path=storage_name,
+            file=f,
+            file_options={"upsert": "true"},
+        )
+    return f"{_STORAGE_BUCKET}/{storage_name}"
+
+
+def insert_video(
+    storage_path: str,
+    category: Category,
+    duration_sec: float | None = None,
+) -> str:
+    res = (
+        _client()
+        .table("videos")
+        .insert(
+            {
+                "storage_path": storage_path,
+                "category": category,
+                "duration_sec": duration_sec,
+                "status": "analyzing",
+            }
+        )
+        .execute()
+    )
+    return _first_row(res)["id"]
+
+
+def update_video_status(video_id: str, status: str) -> None:
+    _client().table("videos").update({"status": status}).eq("id", video_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# analyses / findings
+# ---------------------------------------------------------------------------
+
+
+def insert_analysis(video_id: str) -> str:
+    res = _client().table("analyses").insert({"video_id": video_id}).execute()
+    return _first_row(res)["id"]
+
+
+def finalize_analysis(
+    analysis_id: str,
+    *,
+    error: str | None = None,
+    cost_usd: float | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """분석 종료 시점에 finished_at + 부수 정보 기록."""
+    payload: dict[str, Any] = {"finished_at": datetime.now(UTC).isoformat()}
+    if error is not None:
+        payload["error"] = error
+    if cost_usd is not None:
+        payload["cost_usd"] = cost_usd
+    if metadata is not None:
+        payload["metadata"] = metadata
+    _client().table("analyses").update(payload).eq("id", analysis_id).execute()
+
+
+def save_findings(analysis_id: str, state: AnalysisState) -> None:
+    """state의 5차원 이벤트를 findings 테이블에 bulk insert."""
+    rows = _collect_finding_rows(analysis_id, state)
+    if rows:
+        _client().table("findings").insert(rows).execute()
+
+
+# ---------------------------------------------------------------------------
+# 종료 처리 — 호출자가 success/fail 두 경로만 신경 쓰면 되도록 묶음
+# ---------------------------------------------------------------------------
+
+
+def complete_analysis(
+    analysis_id: str,
+    video_id: str,
+    state: AnalysisState,
+    *,
+    cost_usd: float | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """성공 종료: findings 저장 + analyses.finished_at + videos.status='completed'."""
+    save_findings(analysis_id, state)
+    finalize_analysis(analysis_id, cost_usd=cost_usd, metadata=metadata)
+    update_video_status(video_id, "completed")
+
+
+def fail_analysis(analysis_id: str, video_id: str, error: str) -> None:
+    """실패 종료: analyses.error + videos.status='failed'."""
+    finalize_analysis(analysis_id, error=error)
+    update_video_status(video_id, "failed")
+
+
+# ---------------------------------------------------------------------------
+# 조회 (UI 사이드바·상세 페이지)
+# ---------------------------------------------------------------------------
+
+
+def list_analyses(limit: int = 20) -> list[dict[str, Any]]:
+    """최근 분석 리스트. video 메타도 join으로 함께."""
+    res = (
+        _client()
+        .table("analyses")
+        .select(
+            "id, started_at, finished_at, error, videos(category, storage_path, status)"
+        )
+        .order("started_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return _row_data(res)
+
+
+def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
+    """findings를 차원별 list[Event]로 그룹화 — UI에서 직접 시각화할 수 있는 형태."""
+    res = (
+        _client()
+        .table("findings")
+        .select("*")
+        .eq("analysis_id", analysis_id)
+        .order("start_sec")
+        .execute()
+    )
+    grouped: dict[str, list[BaseModel]] = {dim: [] for dim in _DIM_TO_STATE_FIELD}
+    for row in _row_data(res):
+        dim = row["dimension"]
+        if dim in grouped:
+            grouped[dim].append(_row_to_event(row))
+    return grouped
