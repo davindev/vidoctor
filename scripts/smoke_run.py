@@ -16,13 +16,15 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vidoctor.graph import build_graph  # noqa: E402
+from vidoctor.graph import run_analysis  # noqa: E402
+from vidoctor.graph.state import Category  # noqa: E402
 
 # script.md 의도된 마커. 영상 길이가 의도(3:00)와 다를 경우 매칭이 흔들리는 것은 정상.
 EXPECTED_LECTURE: list[dict] = [
@@ -68,10 +70,6 @@ def _events_dump(state: dict, field: str) -> list[dict]:
     ]
 
 
-async def run(video_path: str, category: str) -> dict:
-    return await build_graph().ainvoke({"video_path": video_path, "category": category})
-
-
 def print_lecture_match_table(state: dict) -> None:
     print("\n=== expected vs detected (lecture markers) ===")
     print(f"{'dim':<12} {'expected':<14} {'hits':<6} note")
@@ -100,7 +98,7 @@ def main() -> None:
 
     print(f"[smoke] start  video={video_path} category={category}")
     t0 = time.time()
-    state = asyncio.run(run(video_path, category))
+    state = asyncio.run(run_analysis(video_path, cast(Category, category)))
     elapsed = time.time() - t0
     print(f"[smoke] graph done in {elapsed:.1f}s")
 
