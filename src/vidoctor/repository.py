@@ -10,6 +10,7 @@ payload JSONB로 직렬화·역직렬화한다.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +32,8 @@ from vidoctor.graph.state import (
     GazeEvent,
 )
 
+_log = logging.getLogger(__name__)
+
 _DIM_TO_EVENT_CLASS: dict[Dimension, type[BaseModel]] = {
     "filler": FillerEvent,
     "cps": CPSEvent,
@@ -42,8 +45,8 @@ _DIM_TO_EVENT_CLASS: dict[Dimension, type[BaseModel]] = {
 _STORAGE_BUCKET = "videos"
 
 # Storage 미저장 영상의 storage_path 마커. 50MB 초과 등으로 Storage 업로드를 skip한 경우
-# `f"{_LOCAL_STORAGE_PREFIX}{filename}"` 형태로 DB에 기록해 추후 영상 재생 시 분기.
-_LOCAL_STORAGE_PREFIX = "local/"
+# `f"{LOCAL_STORAGE_PREFIX}{filename}"` 형태로 DB에 기록해 추후 영상 재생 시 분기.
+LOCAL_STORAGE_PREFIX = "local/"
 
 
 @lru_cache(maxsize=1)
@@ -272,7 +275,7 @@ def get_analysis_storage_path(analysis_id: str) -> str | None:
     if not video:
         return None
     storage_path = video.get("storage_path")
-    if not isinstance(storage_path, str) or storage_path.startswith(_LOCAL_STORAGE_PREFIX):
+    if not isinstance(storage_path, str) or storage_path.startswith(LOCAL_STORAGE_PREFIX):
         return None
     return storage_path
 
@@ -286,3 +289,40 @@ def create_video_signed_url(storage_path: str, expires_in: int = 3600) -> str:
     bucket, _, name = storage_path.partition("/")
     res = _client().storage.from_(bucket).create_signed_url(name, expires_in=expires_in)
     return cast(str, res["signedURL"])
+
+
+def delete_video_for_analysis(analysis_id: str) -> None:
+    """analysis가 속한 영상 + 같은 영상의 모든 analyses/findings/suggestions 일괄 삭제.
+
+    videos row 삭제만으로 cascade(SQL FK on delete cascade)가 자동 처리. Storage
+    파일이 있으면 그것도 함께 정리. Storage 삭제 실패는 silently 무시 — DB 정합성이
+    더 중요하고, 고아 파일은 별도 정리 가능.
+    """
+    res = (
+        _client()
+        .table("analyses")
+        .select("video_id, videos(storage_path)")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    data = cast(dict[str, Any] | None, res.data)
+    if not data:
+        raise LookupError(f"analysis not found: {analysis_id}")
+
+    video_id = cast(str, data["video_id"])
+    video = cast(dict[str, Any] | None, data.get("videos"))
+    storage_path = video.get("storage_path") if video else None
+
+    if isinstance(storage_path, str) and not storage_path.startswith(LOCAL_STORAGE_PREFIX):
+        bucket, _, name = storage_path.partition("/")
+        try:
+            _client().storage.from_(bucket).remove([name])
+        except Exception as e:  # noqa: BLE001
+            # Storage 정리 실패해도 DB 삭제는 진행 — 객체 부재(404)·네트워크 오류 모두 동일 처리.
+            # 고아 파일은 별도 정리 가능, DB 정합성이 우선.
+            _log.warning(
+                "storage cleanup failed: storage_path=%s err=%r", storage_path, e
+            )
+
+    _client().table("videos").delete().eq("id", video_id).execute()

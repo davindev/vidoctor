@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, cast
@@ -29,9 +30,10 @@ from vidoctor.graph.state import (
     GazeEvent,
 )
 from vidoctor.repository import (
-    _LOCAL_STORAGE_PREFIX,
+    LOCAL_STORAGE_PREFIX,
     complete_analysis,
     create_video_signed_url,
+    delete_video_for_analysis,
     fail_analysis,
     get_analysis_findings,
     get_analysis_storage_path,
@@ -103,7 +105,7 @@ def _process_uploaded_video(uploaded_file, category: Category) -> str:  # noqa: 
             st.warning(
                 f"영상 {size / 1024 / 1024:.0f}MB가 Free tier 50MB 한도 초과 — Storage 업로드 skip."
             )
-            storage_path = f"{_LOCAL_STORAGE_PREFIX}{uploaded_file.name}"
+            storage_path = f"{LOCAL_STORAGE_PREFIX}{uploaded_file.name}"
 
         video_id = insert_video(storage_path, category, duration)
         analysis_id = insert_analysis(video_id)
@@ -157,11 +159,15 @@ def _cached_video_url(analysis_id: str) -> str | None:
     """analysis_id → signed URL 또는 None. 매 rerun DB+API 호출 회피.
 
     signed URL TTL(3600s) 절반(1800s)으로 캐시해 만료 직전에도 안전 갱신.
+    None 반환 케이스: Storage 미저장 또는 Storage에서 파일이 이미 삭제됨(stale state).
     """
     storage_path = get_analysis_storage_path(analysis_id)
     if storage_path is None:
         return None
-    return create_video_signed_url(storage_path)
+    try:
+        return create_video_signed_url(storage_path)
+    except Exception:  # noqa: BLE001 - 404 / 네트워크 실패 모두 동일 처리
+        return None
 
 
 @st.cache_data(ttl=300)
@@ -173,10 +179,46 @@ def _cached_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
 def _render_video_player(analysis_id: str) -> None:
     signed_url = _cached_video_url(analysis_id)
     if signed_url is None:
-        st.info("원본 영상이 Storage에 저장되지 않아 재생할 수 없습니다 (Free tier 50MB 초과 등).")
+        st.info(
+            "원본 영상을 재생할 수 없습니다 (Storage에 저장되지 않았거나 파일이 삭제됨)."
+        )
         return
     start = int(st.session_state.get(_jump_key(analysis_id), 0))
     st.video(signed_url, start_time=start)
+
+
+def _invalidate_caches() -> None:
+    _cached_list_analyses.clear()
+    _cached_video_url.clear()
+    _cached_findings.clear()
+
+
+def _confirm_key(analysis_id: str) -> str:
+    return f"confirm_del_{analysis_id}"
+
+
+def _render_delete_section(analysis_id: str) -> None:
+    confirm_key = _confirm_key(analysis_id)
+    if st.session_state.get(confirm_key):
+        st.warning("영상과 모든 분석이 함께 삭제됩니다. 되돌릴 수 없습니다.")
+        col_yes, col_no = st.columns(2)
+        # 취소를 primary로 두어 안전한 기본 선택을 시각 강조 (destructive action 가드).
+        if col_yes.button("정말 삭제", key=f"del_yes_{analysis_id}", type="secondary"):
+            # 다른 탭에서 이미 삭제됐으면 LookupError, UI 동기화는 어차피 진행.
+            with suppress(LookupError):
+                delete_video_for_analysis(analysis_id)
+            st.session_state[confirm_key] = False
+            st.session_state["selected_analysis_id"] = None
+            _invalidate_caches()
+            st.rerun()
+        if col_no.button("취소", key=f"del_no_{analysis_id}", type="primary"):
+            st.session_state[confirm_key] = False
+            st.rerun()
+        return
+
+    if st.button("🗑 영상 + 분석 삭제", key=f"del_{analysis_id}"):
+        st.session_state[confirm_key] = True
+        st.rerun()
 
 
 def _render_findings_grid(analysis_id: str) -> None:
@@ -236,7 +278,7 @@ with st.sidebar:
         try:
             analysis_id = _process_uploaded_video(uploaded, category)
             st.session_state["selected_analysis_id"] = analysis_id
-            _cached_list_analyses.clear()
+            _invalidate_caches()
             st.rerun()
         except Exception as e:
             st.error(f"분석 실패: {e}")
@@ -255,5 +297,7 @@ if selected_id:
     st.divider()
     st.subheader("이슈 목록 — 클릭하면 영상이 해당 구간으로 이동")
     _render_findings_grid(selected_id)
+    st.divider()
+    _render_delete_section(selected_id)
 else:
     st.info("좌측에서 영상을 업로드하거나 이전 분석을 선택하세요.")
