@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from vidoctor.graph import run_analysis  # noqa: E402
-from vidoctor.graph.state import Category  # noqa: E402
+from vidoctor.graph.state import AnalysisState, Category  # noqa: E402
 
 # script.md 의도된 마커. 영상 길이가 의도(3:00)와 다를 경우 매칭이 흔들리는 것은 정상.
 EXPECTED_LECTURE: list[dict] = [
@@ -63,14 +63,14 @@ def overlaps(a_start: float, a_end: float, b_start: float, b_end: float, tol: fl
     return (a_start - tol) <= b_end and (b_start - tol) <= a_end
 
 
-def _events_dump(state: dict, field: str) -> list[dict]:
+def _events_dump(state: AnalysisState, field: str) -> list[dict]:
+    events = state.get(field, []) or []  # type: ignore[literal-required]
     return [
-        e.model_dump(mode="json") if isinstance(e, BaseModel) else dict(e)
-        for e in (state.get(field) or [])
+        e.model_dump(mode="json") if isinstance(e, BaseModel) else dict(e) for e in events
     ]
 
 
-def print_lecture_match_table(state: dict) -> None:
+def print_lecture_match_table(state: AnalysisState) -> None:
     print("\n=== expected vs detected (lecture markers) ===")
     print(f"{'dim':<12} {'expected':<14} {'hits':<6} note")
     print("-" * 70)
