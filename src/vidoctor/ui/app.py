@@ -158,16 +158,14 @@ def _jump_key(analysis_id: str) -> str:
 def _cached_video_url(analysis_id: str) -> str | None:
     """analysis_id → signed URL 또는 None. 매 rerun DB+API 호출 회피.
 
-    signed URL TTL(3600s) 절반(1800s)으로 캐시해 만료 직전에도 안전 갱신.
-    None 반환 케이스: Storage 미저장 또는 Storage에서 파일이 이미 삭제됨(stale state).
+    None 반환 = Storage 미저장(영구 상태). signed URL 발급 실패는 예외로 전파 —
+    Streamlit `cache_data`가 예외에선 결과를 캐싱하지 않아 transient 실패가 1800s
+    동안 None으로 굳어버리는 걸 방지. caller가 try/except로 분기 처리.
     """
     storage_path = get_analysis_storage_path(analysis_id)
     if storage_path is None:
         return None
-    try:
-        return create_video_signed_url(storage_path)
-    except Exception:  # noqa: BLE001 - 404 / 네트워크 실패 모두 동일 처리
-        return None
+    return create_video_signed_url(storage_path)
 
 
 @st.cache_data(ttl=300)
@@ -177,11 +175,13 @@ def _cached_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
 
 
 def _render_video_player(analysis_id: str) -> None:
-    signed_url = _cached_video_url(analysis_id)
+    try:
+        signed_url = _cached_video_url(analysis_id)
+    except Exception:  # noqa: BLE001 - signed URL 발급 실패는 transient, 다음 rerun 재시도
+        st.info("원본 영상 파일을 찾을 수 없습니다 (Storage에서 삭제됐거나 일시적 오류).")
+        return
     if signed_url is None:
-        st.info(
-            "원본 영상을 재생할 수 없습니다 (Storage에 저장되지 않았거나 파일이 삭제됨)."
-        )
+        st.info("원본 영상이 Storage에 저장되지 않았습니다 (Free tier 50MB 초과 등).")
         return
     start = int(st.session_state.get(_jump_key(analysis_id), 0))
     st.video(signed_url, start_time=start)
