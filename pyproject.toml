@@ -20,7 +20,7 @@ dependencies = [
     "scikit-image>=0.26.0",
     "scenedetect>=0.6.7.1",
     "mediapipe>=0.10.18",
-    "mlflow>=2.18.0",
+    "mlflow>=2.18.0,<3",  # 3.x 보안 미들웨어가 localhost-only인데도 403 반환해 회피
 ]
 
 [dependency-groups]
