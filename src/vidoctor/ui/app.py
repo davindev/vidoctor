@@ -21,10 +21,20 @@ from pydantic import BaseModel
 
 from vidoctor import __version__
 from vidoctor.graph import Category, run_analysis
+from vidoctor.graph.state import (
+    ContentGapEvent,
+    CPSEvent,
+    DeadZoneEvent,
+    FillerEvent,
+    GazeEvent,
+)
 from vidoctor.repository import (
+    _LOCAL_STORAGE_PREFIX,
     complete_analysis,
+    create_video_signed_url,
     fail_analysis,
     get_analysis_findings,
+    get_analysis_storage_path,
     insert_analysis,
     insert_video,
     list_analyses,
@@ -45,8 +55,23 @@ DIMENSION_LABEL: dict[str, str] = {
     "content_gap": "Content Gap",
 }
 
+# 차원별 UI 버튼 라벨에 추가 표시할 Pydantic event 필드. 차원 추가 시 여기 한 줄.
+_LABEL_EXTRA_FIELDS: dict[str, tuple[str, ...]] = {
+    "filler": ("text",),
+    "cps": ("kind",),
+    "dead_zone": (),
+    "gaze": ("direction",),
+    "content_gap": ("description",),
+}
+
+# content_gap.description 같이 긴 텍스트는 버튼 라벨에서 truncate.
+_LABEL_EXTRA_MAX_LEN = 30
+
 # Supabase Free tier Storage 한도. 초과 영상은 메타만 저장하고 Storage 업로드는 skip.
 _MAX_STORAGE_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# 5차원 finding 이벤트의 union — start/end/severity property 직접 접근을 타입 안전하게.
+_FindingEvent = FillerEvent | CPSEvent | DeadZoneEvent | GazeEvent | ContentGapEvent
 
 
 def _video_duration(path: Path) -> float | None:
@@ -78,7 +103,7 @@ def _process_uploaded_video(uploaded_file, category: Category) -> str:  # noqa: 
             st.warning(
                 f"영상 {size / 1024 / 1024:.0f}MB가 Free tier 50MB 한도 초과 — Storage 업로드 skip."
             )
-            storage_path = f"local/{uploaded_file.name}"
+            storage_path = f"{_LOCAL_STORAGE_PREFIX}{uploaded_file.name}"
 
         video_id = insert_video(storage_path, category, duration)
         analysis_id = insert_analysis(video_id)
@@ -104,28 +129,73 @@ def _cached_list_analyses(limit: int = 20) -> list[dict[str, Any]]:
     return list_analyses(limit=limit)
 
 
-def _render_findings(analysis_id: str) -> None:
-    findings = get_analysis_findings(analysis_id)
-    total = sum(len(events) for events in findings.values())
+def _fmt_time(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m}:{s:02d}"
 
-    st.metric("총 이슈", total)
+
+def _event_button_label(dim: str, ev: _FindingEvent) -> str:
+    extras: list[str] = []
+    for field in _LABEL_EXTRA_FIELDS.get(dim, ()):
+        v = getattr(ev, field, None)
+        if v:
+            text = str(v)
+            extras.append(
+                text if len(text) <= _LABEL_EXTRA_MAX_LEN
+                else text[: _LABEL_EXTRA_MAX_LEN - 1] + "…"
+            )
+    suffix = f" · {' '.join(extras)}" if extras else ""
+    return f"{_fmt_time(ev.start)}–{_fmt_time(ev.end)} · {ev.severity}{suffix}"
+
+
+def _jump_key(analysis_id: str) -> str:
+    return f"jump_to_{analysis_id}"
+
+
+@st.cache_data(ttl=1800)
+def _cached_video_url(analysis_id: str) -> str | None:
+    """analysis_id → signed URL 또는 None. 매 rerun DB+API 호출 회피.
+
+    signed URL TTL(3600s) 절반(1800s)으로 캐시해 만료 직전에도 안전 갱신.
+    """
+    storage_path = get_analysis_storage_path(analysis_id)
+    if storage_path is None:
+        return None
+    return create_video_signed_url(storage_path)
+
+
+@st.cache_data(ttl=300)
+def _cached_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
+    """findings는 분석 완료 후 immutable이라 짧은 TTL로 캐시."""
+    return get_analysis_findings(analysis_id)
+
+
+def _render_video_player(analysis_id: str) -> None:
+    signed_url = _cached_video_url(analysis_id)
+    if signed_url is None:
+        st.info("원본 영상이 Storage에 저장되지 않아 재생할 수 없습니다 (Free tier 50MB 초과 등).")
+        return
+    start = int(st.session_state.get(_jump_key(analysis_id), 0))
+    st.video(signed_url, start_time=start)
+
+
+def _render_findings_grid(analysis_id: str) -> None:
+    findings = _cached_findings(analysis_id)
+    total = sum(len(events) for events in findings.values())
+    st.caption(f"총 {total}건")
 
     cols = st.columns(len(DIMENSION_LABEL))
     for col, (dim, label) in zip(cols, DIMENSION_LABEL.items(), strict=True):
-        col.metric(label, len(findings.get(dim, [])))
-
-    st.divider()
-
-    for dim, label in DIMENSION_LABEL.items():
         events: list[BaseModel] = findings.get(dim, [])
-        if not events:
-            continue
-        with st.expander(f"{label} ({len(events)}건)", expanded=False):
-            rows = []
+        with col:
+            st.markdown(f"**{label}** · {len(events)}")
             for ev in events:
-                d = ev.model_dump()
-                rows.append({**d, "duration": d["end"] - d["start"]})
-            st.dataframe(rows, use_container_width=True)
+                fe = cast(_FindingEvent, ev)
+                btn_label = _event_button_label(dim, fe)
+                key = f"jmp-{analysis_id}-{dim}-{fe.start}"
+                if st.button(btn_label, key=key, use_container_width=True):
+                    st.session_state[_jump_key(analysis_id)] = fe.start
+                    st.rerun()
 
 
 def _format_analysis_label(a: dict[str, Any]) -> str:
@@ -181,7 +251,9 @@ with st.sidebar:
 
 selected_id = st.session_state.get("selected_analysis_id")
 if selected_id:
-    st.subheader("분석 결과")
-    _render_findings(selected_id)
+    _render_video_player(selected_id)
+    st.divider()
+    st.subheader("이슈 목록 — 클릭하면 영상이 해당 구간으로 이동")
+    _render_findings_grid(selected_id)
 else:
     st.info("좌측에서 영상을 업로드하거나 이전 분석을 선택하세요.")
