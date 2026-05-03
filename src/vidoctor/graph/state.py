@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 Category = Literal["lecture", "vlog", "other"]
 Severity = Literal["low", "mid", "high"]
+Dimension = Literal["filler", "cps", "dead_zone", "gaze", "content_gap"]
 Direction = Literal[
     "front",
     "left",
@@ -15,6 +16,15 @@ Direction = Literal[
     "right_up",
     "right_down",
 ]
+
+# 차원 → AnalysisState 필드 매핑. detector 출력 / DB 저장 / 평가 메트릭 모두 공유.
+DIM_TO_STATE_FIELD: dict[Dimension, str] = {
+    "filler": "fillers",
+    "cps": "cps_anomalies",
+    "dead_zone": "dead_zones",
+    "gaze": "gaze_issues",
+    "content_gap": "content_gaps",
+}
 
 
 class Word(BaseModel):

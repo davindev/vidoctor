@@ -24,7 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from vidoctor.graph import run_analysis  # noqa: E402
-from vidoctor.graph.state import AnalysisState, Category  # noqa: E402
+from vidoctor.graph.state import (  # noqa: E402
+    DIM_TO_STATE_FIELD,
+    AnalysisState,
+    Category,
+)
 
 # script.md 의도된 마커. 영상 길이가 의도(3:00)와 다를 경우 매칭이 흔들리는 것은 정상.
 EXPECTED_LECTURE: list[dict] = [
@@ -38,14 +42,6 @@ EXPECTED_LECTURE: list[dict] = [
     {"start": 140, "end": 145, "dimension": "gaze", "note": "자료 응시 5s"},
     {"start": 155, "end": 170, "dimension": "cps", "note": "1.7 CPS too_slow"},
 ]
-
-DIM_TO_FIELD = {
-    "filler": "fillers",
-    "cps": "cps_anomalies",
-    "dead_zone": "dead_zones",
-    "gaze": "gaze_issues",
-    "content_gap": "content_gaps",
-}
 
 DUMP_FIELDS = (
     "fillers",
@@ -75,7 +71,7 @@ def print_lecture_match_table(state: AnalysisState) -> None:
     print(f"{'dim':<12} {'expected':<14} {'hits':<6} note")
     print("-" * 70)
     for exp in EXPECTED_LECTURE:
-        events = _events_dump(state, DIM_TO_FIELD[exp["dimension"]])
+        events = _events_dump(state, DIM_TO_STATE_FIELD[exp["dimension"]])
         hits = [
             ev for ev in events
             if overlaps(exp["start"], exp["end"], ev["start"], ev["end"], OVERLAP_TOL)

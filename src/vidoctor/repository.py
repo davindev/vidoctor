@@ -20,25 +20,18 @@ from supabase import Client, create_client
 
 from vidoctor.config import get_settings
 from vidoctor.graph.state import (
+    DIM_TO_STATE_FIELD,
     AnalysisState,
     Category,
     ContentGapEvent,
     CPSEvent,
     DeadZoneEvent,
+    Dimension,
     FillerEvent,
     GazeEvent,
 )
 
-# 차원 → state 필드 / event 클래스 매핑. state→DB / DB→state 양방향에서 사용.
-_DIM_TO_STATE_FIELD: dict[str, str] = {
-    "filler": "fillers",
-    "cps": "cps_anomalies",
-    "dead_zone": "dead_zones",
-    "gaze": "gaze_issues",
-    "content_gap": "content_gaps",
-}
-
-_DIM_TO_EVENT_CLASS: dict[str, type[BaseModel]] = {
+_DIM_TO_EVENT_CLASS: dict[Dimension, type[BaseModel]] = {
     "filler": FillerEvent,
     "cps": CPSEvent,
     "dead_zone": DeadZoneEvent,
@@ -115,7 +108,7 @@ def _row_to_event(row: dict[str, Any]) -> BaseModel:
 
 def _collect_finding_rows(analysis_id: str, state: AnalysisState) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for dim, field in _DIM_TO_STATE_FIELD.items():
+    for dim, field in DIM_TO_STATE_FIELD.items():
         events = state.get(field, []) or []  # type: ignore[literal-required]
         for ev in events:
             rows.append(_event_to_row(analysis_id, dim, ev))
@@ -254,7 +247,7 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
         .order("start_sec")
         .execute()
     )
-    grouped: dict[str, list[BaseModel]] = {dim: [] for dim in _DIM_TO_STATE_FIELD}
+    grouped: dict[str, list[BaseModel]] = {dim: [] for dim in DIM_TO_STATE_FIELD}
     for row in _row_data(res):
         dim = row["dimension"]
         if dim in grouped:
