@@ -12,9 +12,11 @@ from vidoctor.eval.metrics import (
     compute_metrics,
     iou,
     match_events,
+    match_points_in_intervals,
 )
 from vidoctor.graph.state import (
     AnalysisState,
+    ContentGapEvent,
     DeadZoneEvent,
     FillerEvent,
     GazeEvent,
@@ -107,6 +109,49 @@ def test_match_events_empty_inputs():
 
 
 # ---------------------------------------------------------------------------
+# match_points_in_intervals — filler용 매칭
+# ---------------------------------------------------------------------------
+
+
+def test_match_points_in_intervals_point_inside_label():
+    matched_l, matched_d = match_points_in_intervals([(45.0, 68.0)], [66.4])
+    assert matched_l == {0}
+    assert matched_d == {0}
+
+
+def test_match_points_in_intervals_point_outside_all_labels():
+    matched_l, matched_d = match_points_in_intervals([(45.0, 68.0)], [200.0])
+    assert matched_l == set()
+    assert matched_d == set()
+
+
+def test_match_points_in_intervals_multiple_points_in_one_label():
+    # burst 라벨 안 단발 3개 → 모두 매칭됨, 라벨 1개 매칭
+    matched_l, matched_d = match_points_in_intervals([(45.0, 68.0)], [46.0, 55.0, 66.0])
+    assert matched_l == {0}
+    assert matched_d == {0, 1, 2}
+
+
+def test_match_points_in_intervals_boundary_half_open():
+    # half-open [start, end): start는 inclusive, end는 exclusive (IoU touching=0과 일관).
+    matched_l, matched_d = match_points_in_intervals([(45.0, 68.0)], [45.0, 68.0])
+    assert matched_l == {0}  # 시작점 45.0은 매칭
+    assert matched_d == {0}  # 시작점만, 끝점 68.0은 매칭 안 됨
+
+
+def test_match_points_in_intervals_adjacent_labels_no_double_match():
+    # 인접 라벨의 끝점=다음 시작점에 detected가 있으면 한 라벨에만 매칭.
+    matched_l, _ = match_points_in_intervals([(0.0, 5.0), (5.0, 10.0)], [5.0])
+    assert matched_l == {1}  # 시작점 inclusive인 두 번째 라벨
+
+
+def test_match_points_in_intervals_empty_inputs():
+    assert match_points_in_intervals([], []) == (set(), set())
+    assert match_points_in_intervals([(0.0, 5.0)], []) == (set(), set())
+    assert match_points_in_intervals([], [3.0]) == (set(), set())
+
+
+# ---------------------------------------------------------------------------
 # DimensionMetrics 계산
 # ---------------------------------------------------------------------------
 
@@ -160,13 +205,61 @@ def test_compute_metrics_skips_dimensions_with_no_label_and_no_detection():
     assert report.macro_f1 == 1.0
 
 
-def test_compute_metrics_partial_overlap_counted_as_tp():
-    state = _state(fillers=[FillerEvent(start=0.5, end=2.5, text="음")])
-    labels = [GoldenLabel(start=1.0, end=2.0, dimension="filler")]
+def test_compute_metrics_filler_uses_point_in_interval():
+    # filler는 IoU가 아니라 detected 시작점이 라벨 구간 안에 있는지로 매칭.
+    # detected start=66.4가 label 45-68 안 → TP. iou_sum은 의미 없어 0.
+    state = _state(fillers=[FillerEvent(start=66.4, end=66.5, text="그")])
+    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
     report = compute_metrics(state, labels)
     m = report.per_dimension["filler"]
     assert m.tp == 1
-    assert m.iou_sum == pytest.approx(0.5)  # inter=1, union=2 → 0.5
+    assert m.fp == 0
+    assert m.fn == 0
+    assert m.iou_sum == 0.0  # filler 분기는 IoU 안 씀
+
+
+def test_compute_metrics_filler_burst_with_multiple_detections_no_fp():
+    # 한 burst 라벨 안에 단발 detected 여러 개 → 모두 "검출 기여"로 묶여 FP 0, TP 1.
+    state = _state(
+        fillers=[
+            FillerEvent(start=46.0, end=46.2, text="음"),
+            FillerEvent(start=55.0, end=55.3, text="어"),
+            FillerEvent(start=66.0, end=66.4, text="그"),
+        ]
+    )
+    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
+    report = compute_metrics(state, labels)
+    m = report.per_dimension["filler"]
+    assert m.tp == 1
+    assert m.fp == 0
+    assert m.fn == 0
+
+
+def test_compute_metrics_filler_outside_label_counts_as_fp():
+    state = _state(
+        fillers=[
+            FillerEvent(start=46.0, end=46.2, text="음"),  # label 45-68 안 → TP
+            FillerEvent(start=200.0, end=200.3, text="좀"),  # label 밖 → FP
+        ]
+    )
+    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
+    report = compute_metrics(state, labels)
+    m = report.per_dimension["filler"]
+    assert m.tp == 1
+    assert m.fp == 1
+    assert m.fn == 0
+
+
+def test_compute_metrics_content_gap_uses_relaxed_iou_threshold():
+    # IoU 0.27은 0.3 미달이지만 content_gap 임계 0.2엔 통과 → TP.
+    state = _state(
+        content_gaps=[ContentGapEvent(start=75.0, end=105.0, description="x")]
+    )
+    labels = [GoldenLabel(start=94.0, end=102.0, dimension="content_gap")]
+    report = compute_metrics(state, labels)
+    m = report.per_dimension["content_gap"]
+    assert m.tp == 1
+    assert m.fn == 0
 
 
 def test_compute_metrics_unmatched_label_counts_as_fn():
@@ -188,9 +281,9 @@ def test_compute_metrics_unmatched_detection_counts_as_fp():
 
 
 def test_compute_metrics_macro_f1_averages_per_dimension():
-    # filler P=R=F1=1.0, gaze P=R=F1=0.0 → macro 0.5
+    # filler P=R=F1=1.0 (point-in-interval), gaze P=R=F1=0.0 (IoU 0) → macro 0.5
     state = _state(
-        fillers=[FillerEvent(start=1.0, end=2.0, text="음")],
+        fillers=[FillerEvent(start=1.5, end=1.7, text="음")],
         gaze_issues=[GazeEvent(start=10.0, end=11.0, direction="down")],
     )
     labels = [

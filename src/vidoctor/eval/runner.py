@@ -16,7 +16,7 @@ from typing import cast, get_args
 import mlflow
 
 from vidoctor.eval.labels import load_labels
-from vidoctor.eval.metrics import EvalReport, compute_metrics
+from vidoctor.eval.metrics import POINT_DIMENSIONS, EvalReport, compute_metrics
 from vidoctor.graph import run_analysis
 from vidoctor.graph.state import Category
 
@@ -29,9 +29,11 @@ def _print_report(video_stem: str, category: str, report: EvalReport) -> None:
     print(header)
     print("-" * len(header))
     for dim, m in report.per_dimension.items():
+        # POINT_DIMENSIONS는 IoU 매칭 안 써서 temporal_iou_mean이 의미 없음.
+        iou_col = f"{'-':>6}" if dim in POINT_DIMENSIONS else f"{m.temporal_iou_mean:>6.3f}"
         print(
             f"{dim:<14} {m.tp:>4} {m.fp:>4} {m.fn:>4} "
-            f"{m.precision:>6.3f} {m.recall:>6.3f} {m.f1:>6.3f} {m.temporal_iou_mean:>6.3f}"
+            f"{m.precision:>6.3f} {m.recall:>6.3f} {m.f1:>6.3f} {iou_col}"
         )
     print(f"\nmacro_f1: {report.macro_f1:.3f}")
 

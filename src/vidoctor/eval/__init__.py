@@ -5,6 +5,7 @@ from vidoctor.eval.metrics import (
     compute_metrics,
     iou,
     match_events,
+    match_points_in_intervals,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "iou",
     "load_labels",
     "match_events",
+    "match_points_in_intervals",
 ]
