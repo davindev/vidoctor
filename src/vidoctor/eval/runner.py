@@ -15,6 +15,7 @@ from typing import cast, get_args
 
 import mlflow
 
+from vidoctor.config import get_settings
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import POINT_DIMENSIONS, EvalReport, compute_metrics
 from vidoctor.graph import run_analysis
@@ -64,6 +65,12 @@ def _log_to_mlflow(
 
 
 def main() -> None:
+    # Settings를 단일 정보원으로 mlflow store URI 명시 — .env에 MLFLOW_TRACKING_URI 있으면
+    # 사용, 없으면 mlflow native default(`file:./mlruns`).
+    settings = get_settings()
+    if settings.mlflow_tracking_uri:
+        mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+
     valid_categories = get_args(Category)
     if len(sys.argv) != 4:
         print("usage: runner.py <video_path> <labels_csv> <category>", file=sys.stderr)

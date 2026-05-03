@@ -25,6 +25,10 @@ class Settings(BaseSettings):
 
     huggingface_token: SecretStr | None = None
 
+    # None이면 mlflow native default(`file:./mlruns`) 사용. .env에서 절대경로 sqlite URI를
+    # 지정하면 평가 결과·mlflow ui가 동일 store를 보도록 정렬된다.
+    mlflow_tracking_uri: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()  # pyright: ignore[reportCallIssue]
