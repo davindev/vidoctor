@@ -84,7 +84,6 @@ class _ContentGapIssue(BaseModel):
     start_sec: float = Field(description="문제 구간 시작 시각 (초)")
     end_sec: float = Field(description="문제 구간 끝 시각 (초)")
     description: str = Field(description="이 구간의 문제점을 한 문장 한국어로 설명")
-    severity: Literal["low", "mid", "high"] = Field(description="문제의 심각도")
 
 
 class _ContentGapResponse(BaseModel):
@@ -263,7 +262,6 @@ async def detect_content_gap_events(
             start=issue.start_sec,
             end=issue.end_sec,
             description=issue.description,
-            severity=issue.severity,
         )
         for issue in response.issues
     ]

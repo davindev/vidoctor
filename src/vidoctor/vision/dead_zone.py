@@ -176,7 +176,7 @@ def _detect_dead_zone_sync(
     events: list[DeadZoneEvent] = []
     for iv in overlap:
         if iv.end - iv.start >= min_duration:
-            events.append(DeadZoneEvent(start=iv.start, end=iv.end, severity="mid"))
+            events.append(DeadZoneEvent(start=iv.start, end=iv.end))
     return events
 
 

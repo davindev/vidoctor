@@ -26,11 +26,13 @@ class Word(BaseModel):
     score: float | None = None
 
 
+# severity는 모든 차원에서 default "mid"로 통일. detector별 임계 결정 근거(라벨링·평가
+# 시스템)가 갖춰지기 전엔 분기가 노이즈만 만들어 평가 정확도 저해. 로드맵은 README 참조.
 class FillerEvent(BaseModel):
     start: float
     end: float
     text: str
-    severity: Severity = "low"
+    severity: Severity = "mid"
 
 
 class CPSEvent(BaseModel):
@@ -51,7 +53,7 @@ class GazeEvent(BaseModel):
     start: float
     end: float
     direction: Direction
-    severity: Severity = "low"
+    severity: Severity = "mid"
 
 
 class ContentGapEvent(BaseModel):

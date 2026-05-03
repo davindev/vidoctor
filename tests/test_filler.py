@@ -1,24 +1,14 @@
+import pytest
+
 from tests._helpers import _w
 from vidoctor.audio.filler import detect_filler_events
 
 
-def test_tier1_filler_detected():
-    events = detect_filler_events([_w("음", 1.0, 1.2)])
+@pytest.mark.parametrize("text", ["음", "어", "그", "이제", "그러니까"])
+def test_filler_dictionary_word_detected(text: str):
+    events = detect_filler_events([_w(text, 0.0, 0.3)])
     assert len(events) == 1
-    assert events[0].text == "음"
-    assert events[0].severity == "low"
-
-
-def test_tier1_long_vowel_severity_mid():
-    # duration 0.5s ≥ 0.4s → 모음 늘임 → severity mid
-    events = detect_filler_events([_w("어", 0.0, 0.5)])
-    assert events[0].severity == "mid"
-
-
-def test_tier2_filler_severity_low():
-    events = detect_filler_events([_w("이제", 0.0, 0.3)])
-    assert len(events) == 1
-    assert events[0].severity == "low"
+    assert events[0].text == text
 
 
 def test_punctuation_normalized():
@@ -38,7 +28,6 @@ def test_repetition_detected():
     # 2 Tier 1 단일 + 1 반복 = 3
     repetitions = [e for e in events if " " in e.text]
     assert len(repetitions) == 1
-    assert repetitions[0].severity == "mid"
 
 
 def test_repetition_too_far_apart_not_merged():

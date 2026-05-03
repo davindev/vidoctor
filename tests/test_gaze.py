@@ -1,6 +1,6 @@
 """Gaze 검출 테스트.
 
-순수 함수(_label_direction / _samples_to_events / _normalize_pose_angle / _severity_for) 단위 +
+순수 함수(_label_direction / _samples_to_events / _normalize_pose_angle) 단위 +
 정면 응시 6점 합성 입력으로 _solve_head_pose sanity check + 카테고리 가드.
 실 영상은 VIDOCTOR_RUN_INTEGRATION=1에서만.
 """
@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 
 from vidoctor.vision.gaze import (
-    MIN_DURATION_SEC,
     PITCH_THRESHOLD_DEG,
     YAW_THRESHOLD_DEG,
     _is_off,
@@ -23,7 +22,6 @@ from vidoctor.vision.gaze import (
     _normalize_pose_angle,
     _PoseSample,
     _samples_to_events,
-    _severity_for,
     _solve_head_pose,
     detect_gaze_events,
 )
@@ -73,19 +71,6 @@ def test_label_direction_diagonal_combines():
     # 노트북 응시 = right_down 또는 left_down 패턴 — 두 축 모두 표기.
     assert _label_direction(YAW_THRESHOLD_DEG + 5, PITCH_THRESHOLD_DEG + 5) == "right_down"
     assert _label_direction(-(YAW_THRESHOLD_DEG + 5), -(PITCH_THRESHOLD_DEG + 5)) == "left_up"
-
-
-# ---------------------------------------------------------------------------
-# _severity_for (경계값만)
-# ---------------------------------------------------------------------------
-
-
-def test_severity_for_boundaries():
-    assert _severity_for(MIN_DURATION_SEC) == "low"
-    assert _severity_for(2.9) == "low"
-    assert _severity_for(3.0) == "mid"
-    assert _severity_for(5.9) == "mid"
-    assert _severity_for(6.0) == "high"
 
 
 # ---------------------------------------------------------------------------
@@ -178,14 +163,6 @@ def test_samples_long_front_gap_splits_events():
     assert len(events) == 2
     assert events[0].direction == "right"
     assert events[1].direction == "left"
-
-
-def test_samples_event_severity_scales_with_duration():
-    # 8초 이탈 → high
-    samples = [_off_down(t * 0.2) for t in range(40)]
-    events = _samples_to_events(samples)
-    assert len(events) == 1
-    assert events[0].severity == "high"
 
 
 # ---------------------------------------------------------------------------

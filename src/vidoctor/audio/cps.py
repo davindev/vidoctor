@@ -131,13 +131,7 @@ def _judge(window: _Window, mean: float, std: float) -> CPSEvent | None:
         return None
 
     kind: Literal["too_fast", "too_slow"] = "too_fast" if abs_fast else "too_slow"
-    return CPSEvent(
-        start=window.start,
-        end=window.end,
-        cps=window.cps,
-        kind=kind,
-        severity="mid",
-    )
+    return CPSEvent(start=window.start, end=window.end, cps=window.cps, kind=kind)
 
 
 def _merge_adjacent(events: list[CPSEvent]) -> list[CPSEvent]:
@@ -157,7 +151,6 @@ def _merge_adjacent(events: list[CPSEvent]) -> list[CPSEvent]:
                 end=ev.end,
                 cps=weighted_cps,
                 kind=last.kind,
-                severity=last.severity,
             )
         else:
             merged.append(ev)

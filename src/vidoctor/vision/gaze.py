@@ -32,7 +32,7 @@ import cv2
 import numpy as np
 
 from vidoctor.config import ROOT
-from vidoctor.graph.state import Direction, GazeEvent, Severity
+from vidoctor.graph.state import Direction, GazeEvent
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -85,10 +85,6 @@ MIN_DURATION_SEC = 1.0
 
 # 인접 이상 프레임 사이 짧은 정면 복귀(눈 깜빡임 등)는 같은 이벤트로 묶음.
 MERGE_GAP_SEC = 0.5
-
-# 이벤트 길이별 severity. 라벨링 분포 확인 후 갱신.
-SEVERITY_MID_SEC = 3.0
-SEVERITY_HIGH_SEC = 6.0
 
 # 자동 ROI 추정 파라미터. 강의 화자 위치는 거의 고정이라 첫 5초 내 BlazeFace 검출 결과만으로
 # 안정 ROI 결정 가능. 머리 회전 시 얼굴이 ROI 밖으로 나가지 않도록 detected bbox의 1.6배로 확장.
@@ -224,14 +220,6 @@ def _is_off(sample: _PoseSample) -> bool:
     return abs(sample.yaw) > YAW_THRESHOLD_DEG or abs(sample.pitch) > PITCH_THRESHOLD_DEG
 
 
-def _severity_for(duration: float) -> Severity:
-    if duration >= SEVERITY_HIGH_SEC:
-        return "high"
-    if duration >= SEVERITY_MID_SEC:
-        return "mid"
-    return "low"
-
-
 def _samples_to_events(samples: list[_PoseSample]) -> list[GazeEvent]:
     """is_off 연속 구간을 GazeEvent로 묶음. 짧은 정면 복귀는 MERGE_GAP_SEC까지 같은 이벤트."""
     events: list[GazeEvent] = []
@@ -246,14 +234,7 @@ def _samples_to_events(samples: list[_PoseSample]) -> list[GazeEvent]:
             return
         duration = cur_end - cur_start
         if duration >= MIN_DURATION_SEC:
-            events.append(
-                GazeEvent(
-                    start=cur_start,
-                    end=cur_end,
-                    direction=cur_dir,
-                    severity=_severity_for(duration),
-                )
-            )
+            events.append(GazeEvent(start=cur_start, end=cur_end, direction=cur_dir))
         cur_start = None
 
     for sample in samples:

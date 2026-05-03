@@ -94,7 +94,7 @@ def test_row_to_event_null_severity_uses_class_default():
     }
     ev = _row_to_event(row)
     assert isinstance(ev, FillerEvent)
-    assert ev.severity == "low"  # FillerEvent 기본값
+    assert ev.severity == "mid"  # 모든 EventClass의 default (v1.0 통일)
 
 
 def test_row_to_event_null_payload_treated_as_empty():
