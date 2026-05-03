@@ -48,6 +48,10 @@ _DIM_TO_EVENT_CLASS: dict[str, type[BaseModel]] = {
 
 _STORAGE_BUCKET = "videos"
 
+# Storage 미저장 영상의 storage_path 마커. 50MB 초과 등으로 Storage 업로드를 skip한 경우
+# `f"{_LOCAL_STORAGE_PREFIX}{filename}"` 형태로 DB에 기록해 추후 영상 재생 시 분기.
+_LOCAL_STORAGE_PREFIX = "local/"
+
 
 @lru_cache(maxsize=1)
 def _client() -> Client:
@@ -256,3 +260,36 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
         if dim in grouped:
             grouped[dim].append(_row_to_event(row))
     return grouped
+
+
+def get_analysis_storage_path(analysis_id: str) -> str | None:
+    """analysis_id → 연결된 video.storage_path. 영상 미저장(`local/...`)이면 None."""
+    res = (
+        _client()
+        .table("analyses")
+        .select("videos(storage_path)")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    data = cast(dict[str, Any] | None, res.data)
+    if not data:
+        return None
+    video = cast(dict[str, Any] | None, data.get("videos"))
+    if not video:
+        return None
+    storage_path = video.get("storage_path")
+    if not isinstance(storage_path, str) or storage_path.startswith(_LOCAL_STORAGE_PREFIX):
+        return None
+    return storage_path
+
+
+def create_video_signed_url(storage_path: str, expires_in: int = 3600) -> str:
+    """`bucket/path` 형식의 storage_path → 만료 시간 있는 signed URL.
+
+    Storage bucket이 private이라 직접 URL은 401 — Supabase API로 서명된 URL 발급해
+    Streamlit `st.video(url)`에 그대로 넘기면 브라우저가 streaming.
+    """
+    bucket, _, name = storage_path.partition("/")
+    res = _client().storage.from_(bucket).create_signed_url(name, expires_in=expires_in)
+    return cast(str, res["signedURL"])
