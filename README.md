@@ -9,10 +9,26 @@ AI 영상 감수 에이전트 — 영상을 업로드하면 5차원으로 분석
 | Filler | WhisperX(faster-whisper-large-v3-turbo + wav2vec2 정렬) + 한국어 사전·정규식 | 전체 |
 | 말 속도 (CPS) | Net CPS 슬라이딩 윈도우 (5s/1s), 절대 기준 AND ±2σ | 전체 |
 | 시각 dead zone | OpenCV diff + SSIM + ASR 무발화, 카테고리별 임계값 | 전체 |
-| 시선 이탈 | MediaPipe Face Mesh iris + cv2.solvePnP head pose | 강의 |
+| 시선 이탈 | MediaPipe Tasks FaceLandmarker + BlazeFace 자동 ROI + cv2.solvePnP head pose | 강의 |
 | 내용 공백 | GPT-4o Vision multi-image batch + ASR 동시 input + rubric | 강의·기타 |
 
 카테고리: **강의 / 브이로그·인터뷰 / 기타** (사용자 드롭다운 선택)
+
+## v1.0 vs v1.1 (계획)
+
+v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든 차원이 default(`mid`)로
+통일되어 있고, 평가 메트릭도 차원별 F1만 측정. v1.1에서 다음을 보완:
+
+- **차원별 severity 결정 로직 재도입**
+  - filler: Tier 1 모음 늘임 / repetition burst 가중
+  - cps: 임계 초과 정도(절대값)
+  - dead_zone: 카테고리별 duration 구간
+  - gaze: 이탈 지속 시간 구간
+  - content_gap: LLM rubric 강화
+- **severity-weighted F1 + Cohen's κ** (라벨러 ≥ 2명)
+- **자동 ROI 강건화**: 4코너 폴백 실패 시 9분할 폴백 / 사용자 수동 ROI (Streamlit drag)
+- **Self-correction(repair+restart) / Backchannel** filler 차원 확장
+- **Storage signed URL 자동 갱신** + 영상 ≥ 50MB 처리 (Free tier 한도 우회)
 
 ## 기술 스택
 
