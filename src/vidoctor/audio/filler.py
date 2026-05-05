@@ -4,9 +4,11 @@
 영향을 받음. 사전은 한국어 구어에서 자주 보고되는 filler 어휘 기반
 (정밀 검증·튜닝은 골든셋 라벨링 후).
 
-MVP 검출 차원:
-- Filled pause: 명확형(어/음/으/에/그/저/뭐) + 모호형(이제/막/좀/약간) 통합 사전
-- Repetition: 인접 동일어 + 시간차 < 500ms (run으로 묶어 단일 이벤트)
+검출 정책 (사전 매칭 단일 차원):
+- 사전 단어(어/음/으/에/그/저/뭐, 이제/막/좀/약간 등)만 filler로 등록
+- 인접 반복은 묶어서 단일 이벤트(예: "어 어 어" → 한 이벤트)
+- 사전에 없는 단어의 반복은 무시 — 강조/명령("짜잔 짜잔", "강아지 강아지")이
+  머뭇거림보다 우세해 disfluency repetition 가정이 데이터에서 깨짐(vlog 검증)
 
 severity는 default(mid). 임계 결정 근거(라벨링·평가)가 없는 상태에선 분기가 노이즈만
 만든다. 로드맵(self-correction / backchannel / severity 차등)은 README 참조.
@@ -47,25 +49,21 @@ def _normalize(text: str) -> str:
     return _PUNCT_RE.sub("", text).strip()
 
 
-def _single_word_event(word: Word, norm: str) -> FillerEvent | None:
-    if norm in FILLERS:
-        return FillerEvent(start=word.start, end=word.end, text=word.text)
-    return None
-
-
 def detect_filler_events(words: list[Word]) -> list[FillerEvent]:
     """단어 시퀀스에서 filler 후보 추출.
 
-    인접 동일어 run을 먼저 그룹화 → 길이 1은 Tier 매칭, 길이 ≥ 2는 반복 이벤트로 단일 등록.
-    이렇게 하면 같은 단어가 Tier 매칭 + 반복으로 이중 등록되는 사고 방지.
+    사전 단어만 등록. 인접 반복(run)이면 묶어서 단일 이벤트.
+    사전에 없는 단어 반복은 무시 — vlog 검증 결과 "인접 반복 = disfluency"
+    가정이 강조/명령(예: 강아지 이름 호출, "짜잔 짜잔") 케이스에 뒤집힘.
+    강의에서도 강조용 반복이 자연스러워 두 카테고리 모두 동일 정책.
     """
     normed = [(w, _normalize(w.text)) for w in words]
     events: list[FillerEvent] = []
 
     i = 0
     while i < len(words):
-        word, norm = normed[i]
-        if not norm:
+        _, norm = normed[i]
+        if not norm or norm not in FILLERS:
             i += 1
             continue
 
@@ -77,19 +75,13 @@ def detect_filler_events(words: list[Word]) -> list[FillerEvent]:
         ):
             run_end += 1
 
-        if run_end - i >= 2:
-            events.append(
-                FillerEvent(
-                    start=words[i].start,
-                    end=words[run_end - 1].end,
-                    text=" ".join(w.text for w in words[i:run_end]),
-                )
+        events.append(
+            FillerEvent(
+                start=words[i].start,
+                end=words[run_end - 1].end,
+                text=" ".join(w.text for w in words[i:run_end]),
             )
-        else:
-            ev = _single_word_event(word, norm)
-            if ev is not None:
-                events.append(ev)
-
+        )
         i = run_end
 
     return events
