@@ -62,10 +62,15 @@ def test_too_slow_segment_detected():
 
 
 def test_long_pause_excluded_from_cps():
-    # 짧은 발화 후 10초 휴지 → 휴지 구간은 net speech 부족으로 윈도우 자체가 거의 안 만들어짐.
-    # too_slow 오탐 없어야 (휴지가 cps 계산에서 제외되므로)
-    words = [_w("안녕하세요여러분", 0.0, 2.0)]
-    t = 12.0
+    # 균일한 6 cps 발화 + 사이에 긴 휴지 → 휴지가 net speech에서 제외되면 윈도우 cps가
+    # 일정해져 σ < MIN_STDEV로 컷오프. 휴지가 분모에 들어가면 휴지 걸친 윈도우 cps가
+    # 떨어져 σ가 커지고 too_slow로 오탐. 즉 이 단언은 net speech 제외 동작의 간접 검증.
+    words = []
+    t = 0.0
+    for _ in range(10):
+        words.append(_w("테스트", t, t + 0.5))
+        t += 0.55
+    t = 20.0
     for _ in range(20):
         words.append(_w("테스트", t, t + 0.5))
         t += 0.55

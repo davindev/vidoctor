@@ -3,14 +3,23 @@
 5초 윈도우 / 1초 스텝. 단어 사이 200ms+ pause는 제외한 순수 발화 시간으로 글자수를 나눔.
 한국어는 영어 WPM이 부적합 → 음절 기반 CPS가 자연스러움.
 
-판정: 절대 기준(<3 or >9 CPS) AND 영상 평균 ±2σ 이탈 동시 충족만 이상으로 표시.
+판정 철학: "이 영상에서 튀는 구간"만 이상으로 본다. 절대 임계(<3, >9)는 화자별·영상
+종류별 정상 속도 편차를 무시하는 자의적 보편값이라 제거. 영상 평균 대비 ±1.5σ 이탈만 사용.
+kind는 평균 대비 방향으로 결정(cps > mean → too_fast).
 인접한 동종 이상 윈도우는 한 구간으로 병합.
 
+평탄 영상 가드: σ가 매우 작은 영상(균질 발화)에선 ±1.5σ 임계가 좁게 형성돼 단어 길이
+비례 배분 등에서 발생하는 수치 노이즈도 이상으로 잡힘. MIN_STDEV 미만이면 검출 자체를
+스킵해 false positive 방지.
+
 상수는 모두 휴리스틱 시작값. 골든셋 라벨링 후 우선 튜닝:
-  1순위: ABSOLUTE_FAST_CPS / ABSOLUTE_SLOW_CPS — 라벨링된 빠름·느림 구간의 실측 분포 기반
-  2순위: WINDOW_SEC — 3s vs 7s 비교해서 F1 최대화
-  3순위: PAUSE_THRESHOLD_SEC, MIN_NET_SPEECH_SEC — 한국어 발화 패턴 적응
-  나머지(SIGMA_THRESHOLD, MIN_WINDOWS_FOR_STATS, STEP_SEC)는 통계 표준값이라 유지.
+  1순위: SIGMA_THRESHOLD — ±1.2σ/±1.5σ/±2σ로 precision/recall 트레이드 탐색.
+         현재 1.5가 sweet spot(±1.2σ는 vlog FP 폭증).
+  2순위: MIN_STDEV — 실데이터(lecture σ=2.19, vlog σ=2.45)엔 영향 없으나 균질 발화
+         방어용. 평탄에 가까운 영상 추가 시 재검토.
+  3순위: WINDOW_SEC — 3s vs 7s 비교해서 F1 최대화
+  4순위: PAUSE_THRESHOLD_SEC, MIN_NET_SPEECH_SEC — 한국어 발화 패턴 적응
+  나머지(MIN_WINDOWS_FOR_STATS, STEP_SEC)는 통계 표준값이라 유지.
 """
 
 from __future__ import annotations
@@ -33,15 +42,15 @@ STEP_SEC = 1.0
 # Shriberg(1994) 등 음성처리 연구의 통용 임계. 이 미만은 발화의 일부, 이상은 진짜 멈춤.
 PAUSE_THRESHOLD_SEC = 0.2
 
-# 한국어 평균 5~7 CPS, 7~9 빠른 편, 9+ 청자 따라가기 부담 시작.
-ABSOLUTE_FAST_CPS = 9.0
+# ±1.5σ ≈ 정상 범위 87%. ±2σ(95%)는 vlog 라벨 대비 recall이 0.125로 너무 보수적이라
+# ±1.5σ로 완화. ±1.2σ도 시도했으나 vlog FP가 7→15로 폭증해 F1·macro_f1 모두 하락 →
+# ±1.5σ가 sweet spot으로 확인. ±1σ(68%)는 자연 변동까지 잡을 위험. 골든셋 확장 후 재튜닝.
+SIGMA_THRESHOLD = 1.5
 
-# 3 CPS 미만은 발화 흐름 끊김 인지 경계 (한국어는 빠른 쪽보다 느린 쪽 임계가 좁음).
-ABSOLUTE_SLOW_CPS = 3.0
-
-# ±2σ = 정규분포 95% 정상 범위. 통계 outlier 검출의 사실상 표준값.
-# ±1σ는 false positive 너무 많고 ±3σ는 너무 보수적.
-SIGMA_THRESHOLD = 2.0
+# 평탄 영상 컷오프(cps 단위). σ가 작은 영상은 ±1.5σ 임계가 좁아 수치 노이즈도 잡히므로
+# 검출 자체를 스킵. 실데이터(lecture 2.19, vlog 2.45)엔 영향 없지만 균질 발화 합성 케이스
+# (test_normal_speech_no_anomaly)에서 false positive 차단을 검증. 갱신은 평탄 영상 라벨 후.
+MIN_STDEV = 0.5
 
 # 5초 윈도우 중 0.5초 미만 발화 = 90%+ 침묵. 단어 1~2개로 cps 계산 noise → 윈도우 자체 skip.
 MIN_NET_SPEECH_SEC = 0.5
@@ -121,16 +130,9 @@ def _sliding_windows(words: list[Word]) -> list[_Window]:
 
 
 def _judge(window: _Window, mean: float, std: float) -> CPSEvent | None:
-    abs_fast = window.cps > ABSOLUTE_FAST_CPS
-    abs_slow = window.cps < ABSOLUTE_SLOW_CPS
-    if not (abs_fast or abs_slow):
+    if abs(window.cps - mean) <= SIGMA_THRESHOLD * std:
         return None
-
-    rel_anomaly = std > 0 and abs(window.cps - mean) > SIGMA_THRESHOLD * std
-    if not rel_anomaly:
-        return None
-
-    kind: Literal["too_fast", "too_slow"] = "too_fast" if abs_fast else "too_slow"
+    kind: Literal["too_fast", "too_slow"] = "too_fast" if window.cps > mean else "too_slow"
     return CPSEvent(start=window.start, end=window.end, cps=window.cps, kind=kind)
 
 
@@ -160,7 +162,7 @@ def _merge_adjacent(events: list[CPSEvent]) -> list[CPSEvent]:
 def detect_cps_anomalies(words: list[Word]) -> list[CPSEvent]:
     """슬라이딩 윈도우로 CPS 이상 구간 검출.
 
-    윈도우 수가 적거나 std=0이면 통계 기반 판정 불가 → 빈 리스트 반환.
+    윈도우 수가 부족하거나(통계 못 냄), σ가 MIN_STDEV 미만이면(평탄 영상) 빈 리스트 반환.
     """
     windows = _sliding_windows(words)
     if len(windows) < MIN_WINDOWS_FOR_STATS:
@@ -169,6 +171,8 @@ def detect_cps_anomalies(words: list[Word]) -> list[CPSEvent]:
     cps_values = [w.cps for w in windows]
     mean = statistics.mean(cps_values)
     std = statistics.stdev(cps_values)
+    if std < MIN_STDEV:
+        return []
 
     raw = [ev for ev in (_judge(w, mean, std) for w in windows) if ev is not None]
     return _merge_adjacent(raw)
