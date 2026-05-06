@@ -1,7 +1,9 @@
-"""Supabase repository: videos / analyses / findings CRUD.
+"""Supabase(DB) + Cloudflare R2(영상 storage) repository: videos / analyses / findings CRUD.
 
 graph 결과를 영구 저장해 UI에서 '이전 분석 다시 보기' 가능. service_role key로
 단일 사용자 가정 (RLS 비활성, v1.1에서 인증 도입 시 정책 추가).
+
+영상 파일은 R2(S3 호환, single-file 5TB·egress 무료)에 저장하고, 메타·findings는 Supabase Postgres에 저장.
 
 5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 갖지만 findings
 테이블은 (start_sec/end_sec/severity/payload JSONB) 통합 스키마. 차원별 고유 필드는
@@ -16,6 +18,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
+import boto3
+from botocore.config import Config
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -42,12 +46,6 @@ _DIM_TO_EVENT_CLASS: dict[Dimension, type[BaseModel]] = {
     "content_gap": ContentGapEvent,
 }
 
-_STORAGE_BUCKET = "videos"
-
-# Storage 미저장 영상의 storage_path 마커. 50MB 초과 등으로 Storage 업로드를 skip한 경우
-# `f"{LOCAL_STORAGE_PREFIX}{filename}"` 형태로 DB에 기록해 추후 영상 재생 시 분기.
-LOCAL_STORAGE_PREFIX = "local/"
-
 
 @lru_cache(maxsize=1)
 def _client() -> Client:
@@ -56,6 +54,24 @@ def _client() -> Client:
     return create_client(
         settings.supabase_url,
         settings.supabase_service_key.get_secret_value(),
+    )
+
+
+@lru_cache(maxsize=1)
+def _s3_client() -> Any:
+    """R2(S3 호환) 클라이언트. region_name='auto'·SigV4는 R2 표준 컨벤션.
+
+    boto3 client 자체는 thread-safe + 무거운 setup 없으나 lru_cache로 일관성 유지
+    (Supabase client 캐시와 동일 패턴).
+    """
+    settings = get_settings()
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.r2_endpoint,
+        aws_access_key_id=settings.r2_access_key_id.get_secret_value(),
+        aws_secret_access_key=settings.r2_secret_access_key.get_secret_value(),
+        region_name="auto",
+        config=Config(signature_version="s3v4"),
     )
 
 
@@ -124,15 +140,15 @@ def _collect_finding_rows(analysis_id: str, state: AnalysisState) -> list[dict[s
 
 
 def upload_video_file(local_path: Path, storage_name: str) -> str:
-    """영상을 Storage에 업로드 후 storage_path(`bucket/name`) 반환. 동일 이름이면 덮어씀."""
-    client = _client()
+    """영상을 R2에 업로드 후 객체 키(storage_path) 반환. 동일 키면 덮어씀.
+
+    boto3 `upload_fileobj`는 5MB 단위 자동 multipart라 300MB 영상도 메모리 폭발 없이
+    스트리밍 업로드. 반환값은 `generate_presigned_url` / `delete_object`에 그대로 전달.
+    """
+    settings = get_settings()
     with local_path.open("rb") as f:
-        client.storage.from_(_STORAGE_BUCKET).upload(
-            path=storage_name,
-            file=f,
-            file_options={"upsert": "true"},
-        )
-    return f"{_STORAGE_BUCKET}/{storage_name}"
+        _s3_client().upload_fileobj(f, settings.r2_bucket, storage_name)
+    return storage_name
 
 
 def insert_video(
@@ -259,7 +275,7 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
 
 
 def get_analysis_storage_path(analysis_id: str) -> str | None:
-    """analysis_id → 연결된 video.storage_path. 영상 미저장(`local/...`)이면 None."""
+    """analysis_id → 연결된 video.storage_path(R2 객체 키). 없으면 None."""
     res = (
         _client()
         .table("analyses")
@@ -275,28 +291,32 @@ def get_analysis_storage_path(analysis_id: str) -> str | None:
     if not video:
         return None
     storage_path = video.get("storage_path")
-    if not isinstance(storage_path, str) or storage_path.startswith(LOCAL_STORAGE_PREFIX):
-        return None
-    return storage_path
+    return storage_path if isinstance(storage_path, str) and storage_path else None
 
 
 def create_video_signed_url(storage_path: str, expires_in: int = 3600) -> str:
-    """`bucket/path` 형식의 storage_path → 만료 시간 있는 signed URL.
+    """R2 객체 키 → 만료 시간 있는 signed URL.
 
-    Storage bucket이 private이라 직접 URL은 401 — Supabase API로 서명된 URL 발급해
-    Streamlit `st.video(url)`에 그대로 넘기면 브라우저가 streaming.
+    버킷이 private이라 직접 URL은 401 — boto3 `generate_presigned_url`로 서명된 URL을
+    만들어 Streamlit `st.video(url)`에 그대로 넘기면 브라우저가 range request로 streaming.
     """
-    bucket, _, name = storage_path.partition("/")
-    res = _client().storage.from_(bucket).create_signed_url(name, expires_in=expires_in)
-    return cast(str, res["signedURL"])
+    settings = get_settings()
+    return cast(
+        str,
+        _s3_client().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.r2_bucket, "Key": storage_path},
+            ExpiresIn=expires_in,
+        ),
+    )
 
 
 def delete_video_for_analysis(analysis_id: str) -> None:
     """analysis가 속한 영상 + 같은 영상의 모든 analyses/findings/suggestions 일괄 삭제.
 
-    videos row 삭제만으로 cascade(SQL FK on delete cascade)가 자동 처리. Storage
-    파일이 있으면 그것도 함께 정리. Storage 삭제 실패는 silently 무시 — DB 정합성이
-    더 중요하고, 고아 파일은 별도 정리 가능.
+    videos row 삭제만으로 cascade(SQL FK on delete cascade)가 자동 처리. R2 객체가
+    있으면 함께 정리. R2 삭제 실패는 silently 무시 — DB 정합성이 더 중요하고, 고아
+    객체는 별도 정리 가능.
     """
     res = (
         _client()
@@ -314,15 +334,14 @@ def delete_video_for_analysis(analysis_id: str) -> None:
     video = cast(dict[str, Any] | None, data.get("videos"))
     storage_path = video.get("storage_path") if video else None
 
-    if isinstance(storage_path, str) and not storage_path.startswith(LOCAL_STORAGE_PREFIX):
-        bucket, _, name = storage_path.partition("/")
+    if isinstance(storage_path, str) and storage_path:
         try:
-            _client().storage.from_(bucket).remove([name])
+            settings = get_settings()
+            _s3_client().delete_object(Bucket=settings.r2_bucket, Key=storage_path)
         except Exception as e:  # noqa: BLE001
-            # Storage 정리 실패해도 DB 삭제는 진행 — 객체 부재(404)·네트워크 오류 모두 동일 처리.
-            # 고아 파일은 별도 정리 가능, DB 정합성이 우선.
+            # R2 정리 실패해도 DB 삭제는 진행 — 객체 부재(404)·네트워크 오류 모두 동일 처리.
             _log.warning(
-                "storage cleanup failed: storage_path=%s err=%r", storage_path, e
+                "R2 cleanup failed: storage_path=%s err=%r", storage_path, e
             )
 
     _client().table("videos").delete().eq("id", video_id).execute()

@@ -2,15 +2,16 @@
 
 흐름:
 1. 사이드바: 카테고리 선택 + 영상 업로드 + 분석 시작 / 이전 분석 리스트
-2. 분석 실행: 영상 임시 저장 → graph 실행 → Supabase Storage 업로드 + DB 저장
+2. 분석 실행: 영상 임시 저장 → graph 실행 → R2 업로드 + Supabase DB 저장
 3. 결과 표시: 5차원 카운트 + 차원별 이슈 리스트
 
-영상 ≤ 50MB만 Supabase Storage 업로드 (Free tier). 초과 시 storage_path는 로컬 마커.
+업로드 한도는 `.streamlit/config.toml`의 `server.maxUploadSize`(300MB)에서 1차 가드.
 """
 
 from __future__ import annotations
 
 import asyncio
+import shutil
 from contextlib import suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -30,7 +31,6 @@ from vidoctor.graph.state import (
     GazeEvent,
 )
 from vidoctor.repository import (
-    LOCAL_STORAGE_PREFIX,
     complete_analysis,
     create_video_signed_url,
     delete_video_for_analysis,
@@ -69,9 +69,6 @@ _LABEL_EXTRA_FIELDS: dict[str, tuple[str, ...]] = {
 # content_gap.description 같이 긴 텍스트는 버튼 라벨에서 truncate.
 _LABEL_EXTRA_MAX_LEN = 30
 
-# Supabase Free tier Storage 한도. 초과 영상은 메타만 저장하고 Storage 업로드는 skip.
-_MAX_STORAGE_UPLOAD_BYTES = 50 * 1024 * 1024
-
 # 5차원 finding 이벤트의 union — start/end/severity property 직접 접근을 타입 안전하게.
 _FindingEvent = FillerEvent | CPSEvent | DeadZoneEvent | GazeEvent | ContentGapEvent
 
@@ -87,25 +84,20 @@ def _video_duration(path: Path) -> float | None:
 
 
 def _process_uploaded_video(uploaded_file, category: Category) -> str:  # noqa: ANN001
-    """업로드 영상 → graph 실행 → Supabase 저장. analysis_id 반환."""
+    """업로드 영상 → graph 실행 → R2 + Supabase DB 저장. analysis_id 반환."""
     suffix = Path(uploaded_file.name).suffix or ".mp4"
+    # getvalue()는 전체 bytes를 메모리에 올려 300MB 영상이면 피크 600MB+. chunked copy로 회피.
+    uploaded_file.seek(0)
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(uploaded_file.getvalue())
+        shutil.copyfileobj(uploaded_file, tmp, length=8 * 1024 * 1024)
         tmp_path = Path(tmp.name)
 
     try:
         duration = _video_duration(tmp_path)
-        size = tmp_path.stat().st_size
 
-        if size <= _MAX_STORAGE_UPLOAD_BYTES:
-            with st.status("Storage 업로드 중...", expanded=False) as s:
-                storage_path = upload_video_file(tmp_path, uploaded_file.name)
-                s.update(state="complete")
-        else:
-            st.warning(
-                f"영상 {size / 1024 / 1024:.0f}MB가 Free tier 50MB 한도 초과 — Storage 업로드 skip."
-            )
-            storage_path = f"{LOCAL_STORAGE_PREFIX}{uploaded_file.name}"
+        with st.status("R2 업로드 중...", expanded=False) as s:
+            storage_path = upload_video_file(tmp_path, uploaded_file.name)
+            s.update(state="complete")
 
         video_id = insert_video(storage_path, category, duration)
         analysis_id = insert_analysis(video_id)
@@ -154,18 +146,25 @@ def _jump_key(analysis_id: str) -> str:
     return f"jump_to_{analysis_id}"
 
 
-@st.cache_data(ttl=1800)
+# 캐시 TTL은 signed URL expires_in 보다 충분히 짧아야 영상 재생 도중 URL이 만료되지
+# 않는다 (st.video는 한 번 받은 URL로 브라우저가 이어서 range request). 1h 강의 재생
+# 도중 만료를 피하려면 expires - TTL ≥ 1h 마진. 발급 비용은 사실상 0이라 길게 둔다.
+_SIGNED_URL_EXPIRES_SEC = 7200
+_VIDEO_URL_CACHE_TTL = 3000
+
+
+@st.cache_data(ttl=_VIDEO_URL_CACHE_TTL)
 def _cached_video_url(analysis_id: str) -> str | None:
     """analysis_id → signed URL 또는 None. 매 rerun DB+API 호출 회피.
 
     None 반환 = Storage 미저장(영구 상태). signed URL 발급 실패는 예외로 전파 —
-    Streamlit `cache_data`가 예외에선 결과를 캐싱하지 않아 transient 실패가 1800s
+    Streamlit `cache_data`가 예외에선 결과를 캐싱하지 않아 transient 실패가 캐시 TTL
     동안 None으로 굳어버리는 걸 방지. caller가 try/except로 분기 처리.
     """
     storage_path = get_analysis_storage_path(analysis_id)
     if storage_path is None:
         return None
-    return create_video_signed_url(storage_path)
+    return create_video_signed_url(storage_path, expires_in=_SIGNED_URL_EXPIRES_SEC)
 
 
 @st.cache_data(ttl=300)
@@ -178,10 +177,10 @@ def _render_video_player(analysis_id: str) -> None:
     try:
         signed_url = _cached_video_url(analysis_id)
     except Exception:  # noqa: BLE001 - signed URL 발급 실패는 transient, 다음 rerun 재시도
-        st.info("원본 영상 파일을 찾을 수 없습니다 (Storage에서 삭제됐거나 일시적 오류).")
+        st.info("원본 영상 파일을 찾을 수 없습니다 (R2에서 삭제됐거나 일시적 오류).")
         return
     if signed_url is None:
-        st.info("원본 영상이 Storage에 저장되지 않았습니다 (Free tier 50MB 초과 등).")
+        st.info("원본 영상이 R2에 저장되지 않았습니다.")
         return
     start = int(st.session_state.get(_jump_key(analysis_id), 0))
     st.video(signed_url, start_time=start)

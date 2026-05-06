@@ -1,0 +1,7 @@
+[server]
+# 원본 영상 보존(트림·압축 없이 R2에 통째로 업로드)을 위해 기본 200MB → 300MB 상향.
+# R2는 단일 파일 5TB까지 받지만, 시연 비용·메모리·업로드 시간 고려해 300MB 가드 유지.
+# maxMessageSize는 브라우저↔서버 WebSocket 단일 페이로드 한도 — maxUploadSize와
+# 함께 올려야 큰 파일이 axios 단계에서 잘리지 않는다.
+maxUploadSize = 300
+maxMessageSize = 300
