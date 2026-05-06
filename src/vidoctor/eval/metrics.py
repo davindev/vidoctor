@@ -28,6 +28,12 @@ IOU_THRESHOLD = 0.3
 # 매칭 전략이 다른 차원. 라벨러는 burst, detector는 단발이라 IoU 대신 point-in-interval.
 POINT_DIMENSIONS: frozenset[Dimension] = frozenset({"filler"})
 
+# Boundary tolerance — 라벨 영역을 ±이 값(초)만큼 확장한 뒤 detection point가 그 안에
+# 들어오면 매칭으로 본다. 라벨러가 영상 플레이어에서 1초 단위로 라운딩한 정밀도를
+# ASR ±20ms 정밀도와 정합시키기 위함. 음성 disfluency 표준은 200~500ms이지만 우리
+# 라벨이 1초 단위라 ±1s 채택 (다른 burst를 흡수하지 않는 sweet spot).
+FILLER_TOLERANCE_SEC = 1.0
+
 # IoU 매칭 차원의 임계. content_gap은 LLM 출력의 시간 정밀도가 떨어져 완화.
 # IoU 매칭 차원만 명시 — POINT_DIMENSIONS 차원은 들어가지 않음 (직접 조회 시 KeyError로 빠른 실패).
 DIM_IOU_THRESHOLD: dict[Dimension, float] = {
@@ -123,6 +129,7 @@ def match_events(
 def match_points_in_intervals(
     labels: list[Interval],
     detected_starts: list[float],
+    tolerance: float = 0.0,
 ) -> tuple[set[int], set[int]]:
     """라벨 구간 안에 detected 시작점이 1개 이상 들어가면 그 라벨 = 매칭.
 
@@ -130,8 +137,10 @@ def match_points_in_intervals(
     한 라벨에 detected 여러 개가 들어가도 그 detected들은 "검출 기여"로 모두 매칭됨 처리
     (FP에 안 들어감) — detector가 잘게 쪼갠 게 잘못이 아니므로.
 
-    경계 정책: half-open `[l_start, l_end)`. IoU의 touching=0 컨벤션과 일관 — 인접
-    라벨 끝점이 같은 시각이면 detected는 한 라벨에만 매칭.
+    경계 정책: half-open `[l_start - tolerance, l_end + tolerance)`. tolerance=0이면
+    IoU의 touching=0 컨벤션과 일관 — 인접 라벨 끝점이 같은 시각이면 detected는 한 라벨에만
+    매칭. tolerance>0이면 양 쪽 끝이 확장되어 인접 라벨 사이에 검출이 들어가면 둘 다에
+    매칭될 수 있음 (사용자 가시 의미상 둘 다의 finding으로 간주해도 무해).
 
     반환: (매칭된 label idx 집합, 매칭된 detected idx 집합).
     """
@@ -139,22 +148,27 @@ def match_points_in_intervals(
     matched_detected: set[int] = set()
     for li, (l_start, l_end) in enumerate(labels):
         for di, det in enumerate(detected_starts):
-            if l_start <= det < l_end:
+            if (l_start - tolerance) <= det < (l_end + tolerance):
                 matched_labels.add(li)
                 matched_detected.add(di)
     return matched_labels, matched_detected
 
 
-def _compute_filler_metrics(
-    dim: Dimension, dim_labels: list[Interval], events: list[Any]
+def compute_filler_metrics(
+    dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
-    """filler는 point-in-interval 매칭. iou_sum은 의미 없으므로 0으로 유지."""
+    """filler 차원 단독 평가. point-in-interval 매칭 + tolerance.
+
+    `compute_metrics`의 차원 분기에서도 사용하고, 외부 평가 스크립트에서도 직접 import해
+    같은 산식을 공유한다 — 한쪽만 바꿔서 평가 수치가 silently divergent 되는 걸 방지.
+    iou_sum은 의미 없으므로 0으로 유지.
+    """
     detected_starts = [e.start for e in events]
     matched_labels, matched_detected = match_points_in_intervals(
-        dim_labels, detected_starts
+        dim_labels, detected_starts, tolerance=FILLER_TOLERANCE_SEC
     )
     return DimensionMetrics(
-        dimension=dim,
+        dimension="filler",
         tp=len(matched_labels),
         fp=len(detected_starts) - len(matched_detected),
         fn=len(dim_labels) - len(matched_labels),
@@ -195,7 +209,7 @@ def compute_metrics(state: AnalysisState, labels: list[GoldenLabel]) -> EvalRepo
             continue
 
         if dim in POINT_DIMENSIONS:
-            report.per_dimension[dim] = _compute_filler_metrics(dim, dim_labels, events)
+            report.per_dimension[dim] = compute_filler_metrics(dim_labels, events)
         else:
             report.per_dimension[dim] = _compute_iou_metrics(dim, dim_labels, events)
 
