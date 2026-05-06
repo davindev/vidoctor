@@ -1,12 +1,17 @@
 """WhisperX 기반 한국어 ASR + wav2vec2 forced alignment.
 
-faster-whisper-large-v3-turbo로 텍스트 추출 후 wav2vec2로 단어 단위 ±20ms 정렬.
-모델은 첫 호출 시 lazy load되어 프로세스 수명 동안 캐시.
+ASR 모델로 텍스트 추출 후 wav2vec2로 단어 단위 ±20ms 정렬. 모델은 첫 호출 시 lazy
+load되어 프로세스 수명 동안 캐시.
+
+`VIDOCTOR_WHISPER_MODEL` 환경변수로 모델 path 또는 HF id 지정 가능. 기본은 OpenAI
+영어 우세 large-v3-turbo이고, 한국어 fine-tuned 모델(예: ct2 변환된 KsponSpeech 학습)
+경로를 지정하면 그쪽으로 swap.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -18,7 +23,7 @@ from vidoctor.graph.state import Word
 
 DEVICE = "cpu"
 COMPUTE_TYPE = "int8"
-MODEL_NAME = "large-v3-turbo"
+DEFAULT_MODEL_NAME = "large-v3-turbo"
 LANGUAGE = "ko"
 BATCH_SIZE = 16
 
@@ -33,7 +38,7 @@ class _LoadedModels:
 @lru_cache(maxsize=1)
 def _load_models() -> _LoadedModels:
     asr = whisperx.load_model(
-        MODEL_NAME,
+        os.environ.get("VIDOCTOR_WHISPER_MODEL", DEFAULT_MODEL_NAME),
         device=DEVICE,
         compute_type=COMPUTE_TYPE,
         language=LANGUAGE,
