@@ -458,11 +458,10 @@ def _detect_gaze_sync(video_path: str) -> list[GazeEvent]:
     return _samples_to_events(samples)
 
 
-async def detect_gaze_events(video_path: str, category: str) -> list[GazeEvent]:
-    """영상 + 카테고리 → 시선 이탈 이벤트 리스트.
+async def detect_gaze_events(video_path: str) -> list[GazeEvent]:
+    """영상 → 시선 이탈 이벤트 리스트.
 
-    강의 카테고리만 처리. MediaPipe·OpenCV는 sync·CPU bound이라 to_thread로 분리.
+    그래프가 lecture 카테고리에서만 이 노드를 호출한다. MediaPipe·OpenCV는 sync·CPU
+    bound이라 to_thread로 분리해 이벤트 루프 차단 방지.
     """
-    if category != "lecture":
-        return []
     return await asyncio.to_thread(_detect_gaze_sync, video_path)

@@ -1,11 +1,15 @@
 """5차원 분석 노드.
 
-- transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment) ← 구현됨
+카테고리별 차원 활성/비활성은 `pipeline.py`의 conditional edge가 결정하며, 이 모듈의
+detection 노드는 자기 차원만 책임진다 — detect_gaze / detect_content_gap이
+비활성 카테고리에서 호출되지 않는 것은 그래프가 보장.
+
+- transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment)
 - detect_filler: 한국어 filler 사전 + 정규식
 - detect_cps: Net CPS 슬라이딩 윈도우 (5s/1s, pause >200ms 제외)
 - detect_dead_zone: OpenCV diff + SSIM + ASR 무발화
-- detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose (강의만)
-- detect_content_gap: GPT-4o Vision multi-image batch + ASR (강의·기타만)
+- detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose
+- detect_content_gap: GPT-4o Vision multi-image batch + ASR
 - generate_suggestions: GPT-4o-mini로 finding 통합 → 개선 제안
 """
 
@@ -48,7 +52,7 @@ async def detect_dead_zone(state: AnalysisState) -> dict:
 async def detect_gaze(state: AnalysisState) -> dict:
     from vidoctor.vision.gaze import detect_gaze_events
 
-    events = await detect_gaze_events(state["video_path"], state["category"])
+    events = await detect_gaze_events(state["video_path"])
     return {"gaze_issues": events}
 
 

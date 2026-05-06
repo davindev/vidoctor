@@ -1,7 +1,12 @@
 import pytest
 
 from vidoctor.graph import build_graph
-from vidoctor.graph.state import Category
+from vidoctor.graph.state import (
+    CATEGORY_DIMENSIONS,
+    DIM_TO_STATE_FIELD,
+    Category,
+    Dimension,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -14,18 +19,21 @@ def _stub_heavy_nodes(monkeypatch):
     async def _empty_words(_path: str):
         return []
 
-    async def _empty_events(_path: str, _transcript, _category):
+    async def _empty_dead_zone(_path: str, _transcript, _category):
         return []
 
-    async def _empty_gaze(_path: str, _category):
+    async def _empty_content_gap(_path: str, _transcript, _category):
+        return []
+
+    async def _empty_gaze(_path: str):
         return []
 
     monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty_words)
     monkeypatch.setattr(
-        "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_events
+        "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_dead_zone
     )
     monkeypatch.setattr(
-        "vidoctor.vision.content_gap.detect_content_gap_events", _empty_events
+        "vidoctor.vision.content_gap.detect_content_gap_events", _empty_content_gap
     )
     monkeypatch.setattr("vidoctor.vision.gaze.detect_gaze_events", _empty_gaze)
 
@@ -36,30 +44,45 @@ def test_graph_compiles():
 
 
 @pytest.mark.parametrize("category", ["lecture", "vlog", "other"])
-async def test_graph_runs_for_category(category: Category):
+async def test_graph_runs_with_active_dimensions(category: Category):
     g = build_graph()
     result = await g.ainvoke(
         {"video_path": "/tmp/x.mp4", "category": category},
     )
-    expected = {
-        "transcript",
-        "fillers",
-        "cps_anomalies",
-        "dead_zones",
-        "gaze_issues",
-        "content_gaps",
-        "suggestions",
-    }
-    assert expected.issubset(result.keys())
+    base = {"transcript", "suggestions"}
+    active_fields = {DIM_TO_STATE_FIELD[d] for d in CATEGORY_DIMENSIONS[category]}
+    assert base.issubset(result.keys())
+    assert active_fields.issubset(result.keys())
 
 
-async def test_stream_yields_node_chunks():
+@pytest.mark.parametrize(
+    "category,inactive_dims",
+    [
+        ("lecture", set[Dimension]()),
+        ("vlog", {"gaze", "content_gap"}),
+        ("other", {"gaze"}),
+    ],
+)
+async def test_inactive_dimensions_are_not_in_state(
+    category: Category, inactive_dims: set[Dimension]
+):
+    g = build_graph()
+    result = await g.ainvoke(
+        {"video_path": "/tmp/x.mp4", "category": category},
+    )
+    inactive_fields = {DIM_TO_STATE_FIELD[d] for d in inactive_dims}
+    assert inactive_fields.isdisjoint(result.keys())
+
+
+async def test_stream_yields_active_node_chunks():
     g = build_graph()
     nodes_seen: set[str] = set()
     async for chunk in g.astream(
-        {"video_path": "/tmp/x.mp4", "category": "lecture"},
+        {"video_path": "/tmp/x.mp4", "category": "vlog"},
     ):
         nodes_seen.update(chunk.keys())
     assert "transcribe" in nodes_seen
     assert "generate_suggestions" in nodes_seen
     assert {"detect_filler", "detect_cps", "detect_dead_zone"} <= nodes_seen
+    assert "detect_gaze" not in nodes_seen
+    assert "detect_content_gap" not in nodes_seen

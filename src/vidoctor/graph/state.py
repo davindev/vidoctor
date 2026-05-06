@@ -26,6 +26,17 @@ DIM_TO_STATE_FIELD: dict[Dimension, str] = {
     "content_gap": "content_gaps",
 }
 
+# 카테고리별 활성 차원. LangGraph conditional edge가 이 매핑을 보고 그래프 자체를 분기 →
+# 비활성 차원은 detection 노드가 호출되지 않는다.
+# - lecture: 5차원 모두
+# - vlog/인터뷰: 시선 이탈·내용 공백은 비활성 (의도된 컷어웨이·일상 기록 영상에 부적합)
+# - other(default): 시선 이탈만 비활성 (도메인 의존성 큼 — 음악·게임·예능 등)
+CATEGORY_DIMENSIONS: dict[Category, tuple[Dimension, ...]] = {
+    "lecture": ("filler", "cps", "dead_zone", "gaze", "content_gap"),
+    "vlog": ("filler", "cps", "dead_zone"),
+    "other": ("filler", "cps", "dead_zone", "content_gap"),
+}
+
 
 class Word(BaseModel):
     """WhisperX word-level timestamp."""

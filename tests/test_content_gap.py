@@ -180,9 +180,3 @@ async def test_content_gap_returns_response_for_blank_lecture(tmp_path: Path):
         assert ev.description
 
 
-@pytest.mark.skipif(not INTEGRATION_ENABLED, reason="VIDOCTOR_RUN_INTEGRATION=1 필요")
-async def test_vlog_category_skipped(tmp_path: Path):
-    video = tmp_path / "blank.mp4"
-    _make_lecture_video(video, duration_sec=60.0)
-    events = await detect_content_gap_events(str(video), [], "vlog")
-    assert events == []

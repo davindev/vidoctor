@@ -193,17 +193,6 @@ def test_solve_head_pose_front_facing_returns_small_yaw_pitch():
 
 
 # ---------------------------------------------------------------------------
-# 카테고리 가드 — async wrapper
-# ---------------------------------------------------------------------------
-
-
-def test_detect_gaze_events_skips_non_lecture_without_video():
-    # 영상 경로가 무효해도 lecture가 아니면 즉시 [] 반환 (영상 열지 않음).
-    assert asyncio.run(detect_gaze_events("/nonexistent/path.mp4", "vlog")) == []
-    assert asyncio.run(detect_gaze_events("/nonexistent/path.mp4", "other")) == []
-
-
-# ---------------------------------------------------------------------------
 # 실 영상 통합 — VIDOCTOR_RUN_INTEGRATION=1 일 때만
 # ---------------------------------------------------------------------------
 
@@ -216,7 +205,7 @@ def test_detect_gaze_on_lecture_video_runs_without_crash():
     video = Path("data/golden/lecture.mp4")
     if not video.exists():
         pytest.skip(f"missing fixture: {video}")
-    events = asyncio.run(detect_gaze_events(str(video), "lecture"))
+    events = asyncio.run(detect_gaze_events(str(video)))
     # 강의 영상은 화자 정면 응시가 기본이라 0개여도 정상. 크래시·타입 무결성만 보증.
     assert isinstance(events, list)
     for e in events:

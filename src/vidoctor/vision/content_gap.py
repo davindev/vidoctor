@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 import cv2
 from langchain_core.messages import HumanMessage
@@ -63,9 +63,9 @@ _OTHER_RUBRIC = """당신은 영상 감수 전문가입니다. 아래 영상의 
 - 누락된 정보로 인해 의미가 통하지 않는 구간이 있는가
 """
 
-# vlog는 활성 카테고리 아님 → dict에 키 없음. 시그니처에서 좁혀 받음.
-_ActiveCategory = Literal["lecture", "other"]
-_RUBRICS: dict[_ActiveCategory, str] = {
+# vlog는 의도적으로 미등록. 그래프가 vlog에서 이 노드를 호출하지 않으며, 위반 시
+# KeyError로 즉시 fail-fast.
+_RUBRICS: dict[Category, str] = {
     "lecture": _LECTURE_RUBRIC,
     "other": _OTHER_RUBRIC,
 }
@@ -241,12 +241,8 @@ async def detect_content_gap_events(
 ) -> list[ContentGapEvent]:
     """영상 + transcript + 카테고리 → 내용 공백 이벤트 리스트.
 
-    브이로그는 빈 리스트 반환 (활성 카테고리 아님). 카테고리 분기는 이 모듈에서만
-    수행해 호출자(graph node)가 신경 쓸 일 X.
+    그래프가 lecture·other 카테고리에서만 이 노드를 호출한다. category는 rubric 선택용.
     """
-    if category == "vlog":
-        return []
-
     samples = _sample_frames(video_path, transcript)
     if not samples:
         return []
