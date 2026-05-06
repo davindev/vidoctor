@@ -38,8 +38,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 | 작업 | 현 상태 | 근거 |
 |---|---|---|
-| LangGraph conditional edge / 동적 그래프 | 정적 fan-out, 카테고리 분기는 detector 내부 early-return (`vision/gaze.py`, `vision/content_gap.py`) | 기획서 2.7·5절 "Airflow 가능 영역 아닌 LangGraph 고유 가치"로 강조한 차별점 |
-| `generate_suggestions` 실구현 | `return {"suggestions": []}` 스텁 (`graph/nodes.py:65`). DB `suggestions` 테이블 항상 비어 있음 | 기획서 1절 "개선 제안" 출력 + LangChain structured output 어필 |
+| `generate_suggestions` 실구현 | `return {"suggestions": []}` 스텁 (`graph/nodes.py`). DB `suggestions` 테이블 항상 비어 있음 | 기획서 1절 "개선 제안" 출력 + LangChain structured output 어필 |
 | Dockerfile + Fly.io 배포 | `Dockerfile` / `fly.toml` 없음, 시연 URL 없음 | 기획서 2.3·2.5 "필수" |
 
 ### P1 — 3분 영상 시연 안정성
