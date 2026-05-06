@@ -28,7 +28,6 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 - **severity-weighted F1 + Cohen's κ** (라벨러 ≥ 2명)
 - **자동 ROI 강건화**: 4코너 폴백 실패 시 9분할 폴백 / 사용자 수동 ROI (Streamlit drag)
 - **Self-correction(repair+restart) / Backchannel** filler 차원 확장
-- **Storage signed URL 자동 갱신** + 영상 ≥ 50MB 처리 (Free tier 한도 우회)
 
 ## 잔여 작업
 
@@ -47,8 +46,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 | 작업 | 현 상태 |
 |---|---|
-| FFmpeg 앞 3분 자동 트림 + 720p CRF 28 사전 압축 | 50MB 초과 시 Storage 업로드 skip만, 트림·압축 없음 (`ui/app.py:104`) |
-| `graph.astream()` 노드별 진행률 | `asyncio.run(run_analysis())` 동기 일괄 (`ui/app.py:115`) |
+| `graph.astream()` 노드별 진행률 | `asyncio.run(run_analysis())` 동기 일괄 (`ui/app.py`) |
 | 시간축 이슈 밀도 차트 + 품질 히트맵 | 차원별 버튼 그리드만 (`ui/app.py:224`) — 기획서 1절 출력 섹션 미충족 |
 
 ### P2 — 관찰성·CI·문서
@@ -64,7 +62,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 ### v1.1로 분류 (시간·인력 부담 큼)
 
-- Storage signed URL 직접 업로드 (현재 백엔드 경유) / ≥ 50MB 영상 처리
+- Storage signed URL 직접 업로드 (현재 백엔드 경유로 R2 PutObject)
 - DeepEval + Cohen's κ — 라벨러 ≥ 2명 전제
 - Label Studio 연동, severity 차등 + severity-weighted F1
 - pyannote VAD 동적 삽입 — `huggingface_token` 환경변수만 있고 코드 미사용
@@ -244,8 +242,8 @@ detector 단에서 우회 어려움. 다음 후보:
 
 - 오케스트레이션: LangGraph + LangChain
 - VLM: GPT-4o Vision (sync) + GPT-4o-mini (개선 제안)
-- 인프라: Supabase Postgres + Storage
-- UI: Streamlit
+- 인프라: Supabase Postgres (DB) + Cloudflare R2 (영상 storage, S3 호환)
+- UI: Streamlit (`server.maxUploadSize = 300MB`)
 - 관찰성: Langfuse (LLM trace) + MLflow (실험 추적)
 - 평가: scikit-learn + Cohen's κ + DeepEval + Label Studio + pytest
 - 배포: Fly.io performance-2x + Docker
@@ -254,6 +252,7 @@ detector 단에서 우회 어려움. 다음 후보:
 
 - 분석 시간: ≤ 1.5분
 - 비용: ≤ $0.20/영상
+- 영상 업로드 한도: 단일 파일 300MB (원본 보존 — 트림·압축 없이 R2에 그대로)
 
 ## 셋업
 
@@ -266,7 +265,7 @@ uv sync
 
 # 환경 변수
 cp .env.example .env
-# .env 채우기
+# .env 채우기 — OPENAI / SUPABASE / R2 / LANGFUSE / HUGGINGFACE 키
 
 # Streamlit 실행
 uv run streamlit run src/vidoctor/ui/app.py
@@ -274,6 +273,18 @@ uv run streamlit run src/vidoctor/ui/app.py
 # 테스트
 uv run pytest
 ```
+
+### 외부 인프라
+
+- **Supabase** (DB): 프로젝트 생성 후 `supabase/migrations/` 안의 SQL 파일을 번호 순으로
+  SQL Editor에서 실행. `0001_init.sql`(스키마) → `0002_drop_videos_storage_bucket.sql`
+  (R2 이전에 따른 Storage bucket 정리). DB만 사용하고 영상 storage는 R2로 분리됨
+- **Cloudflare R2** (영상 storage): 무료 가입 → R2 활성화 → 버킷 `vidoctor-videos` 생성 →
+  `R2 Object Storage → Manage R2 API Tokens → Create Account API token`으로
+  Object Read & Write 권한, 해당 버킷 한정으로 발급. 발급 화면에서 **Access Key ID /
+  Secret Access Key / Endpoint URL** 3종을 `.env`에 채움. 무료 10GB·egress 무료·단일
+  파일 5TB라 골든셋(원본 보존, 5~6분 영상) 시연에 충분
+- **Langfuse**: cloud free tier 가입 → public/secret key 발급
 
 ## 라이선스
 
