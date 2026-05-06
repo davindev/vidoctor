@@ -30,6 +30,49 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 - **Self-correction(repair+restart) / Backchannel** filler 차원 확장
 - **Storage signed URL 자동 갱신** + 영상 ≥ 50MB 처리 (Free tier 한도 우회)
 
+## 잔여 작업
+
+기획서 명시 사양 중 미구현 항목을 우선순위별로 정리. 어필 직결도와 시연 안정성
+기준이며, 위에서 언급된 v1.1 항목과 일부 중복된다.
+
+### P0 — 어필 1순위
+
+| 작업 | 현 상태 | 근거 |
+|---|---|---|
+| LangGraph conditional edge / 동적 그래프 | 정적 fan-out, 카테고리 분기는 detector 내부 early-return (`vision/gaze.py`, `vision/content_gap.py`) | 기획서 2.7·5절 "Airflow 가능 영역 아닌 LangGraph 고유 가치"로 강조한 차별점 |
+| `generate_suggestions` 실구현 | `return {"suggestions": []}` 스텁 (`graph/nodes.py:65`). DB `suggestions` 테이블 항상 비어 있음 | 기획서 1절 "개선 제안" 출력 + LangChain structured output 어필 |
+| Dockerfile + Fly.io 배포 | `Dockerfile` / `fly.toml` 없음, 시연 URL 없음 | 기획서 2.3·2.5 "필수" |
+
+### P1 — 3분 영상 시연 안정성
+
+| 작업 | 현 상태 |
+|---|---|
+| FFmpeg 앞 3분 자동 트림 + 720p CRF 28 사전 압축 | 50MB 초과 시 Storage 업로드 skip만, 트림·압축 없음 (`ui/app.py:104`) |
+| `graph.astream()` 노드별 진행률 | `asyncio.run(run_analysis())` 동기 일괄 (`ui/app.py:115`) |
+| 시간축 이슈 밀도 차트 + 품질 히트맵 | 차원별 버튼 그리드만 (`ui/app.py:224`) — 기획서 1절 출력 섹션 미충족 |
+
+### P2 — 관찰성·CI·문서
+
+| 작업 | 현 상태 |
+|---|---|
+| 영상당 비용·latency UI 노출 | `complete_analysis(cost_usd=...)` 시그니처만 존재, 호출자가 `None` 전달 |
+| MLflow A/B run 결과 README 첨부 | 표는 있으나 실제 run·스크린샷 없음 |
+| Langfuse 대시보드 스크린샷 | trace는 흐르나 README 미첨부 |
+| GitHub Actions CI (pytest + 골든셋 회귀) | `.github/` 디렉토리 없음 |
+| Mermaid 아키텍처 다이어그램 | 미작성 |
+| `docker compose up` 1-click | 셋업 섹션 명시와 달리 파일 없음 |
+
+### v1.1로 분류 (시간·인력 부담 큼)
+
+- Storage signed URL 직접 업로드 (현재 백엔드 경유) / ≥ 50MB 영상 처리
+- DeepEval + Cohen's κ — 라벨러 ≥ 2명 전제
+- Label Studio 연동, severity 차등 + severity-weighted F1
+- pyannote VAD 동적 삽입 — `huggingface_token` 환경변수만 있고 코드 미사용
+  (filler가 사전 매칭 단일 차원으로 굳음)
+- 자동 카테고리 분류, 신규 카테고리(발표/스피치 등) 정밀 튜닝
+- Replicate GPU 외부화 + cold-start warmup — 현재 `DEVICE="cpu"`, `int8`
+  로컬 운용 (`audio/transcribe.py:19`)
+
 ## 검출 차원 튜닝 회고 — CPS / Filler
 
 골든셋 라벨링 후 `lecture macro_f1=0.222`, `vlog=0.114`로 측정된 baseline에서 차원별로
