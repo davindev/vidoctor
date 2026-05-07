@@ -4,13 +4,13 @@
 - **filler**: point-in-interval. 라벨러는 burst 구간으로 묶고 detector는 단발 어휘별
   (0.1~0.5초)이라 IoU로는 단위 mismatch. 라벨 구간 안에 detected 시작점이 1개 이상
   들어가면 그 라벨 = TP. burst 안 detected는 모두 "검출 기여"로 묶여 FP에 카운트 X.
-- **나머지** (cps / dead_zone / gaze / content_gap): IoU greedy 1:1 매칭.
+- **cps**: 라벨 ±1초 확장 후 IoU greedy 1:1 + kind(too_fast/too_slow) 일치 필수.
+  방향 정보가 사용자 가시 의미의 핵심이라 반대 kind 매칭은 가짜 TP.
+- **dead_zone / gaze / content_gap**: IoU greedy 1:1 매칭.
 
 IoU 임계도 차원별:
 - content_gap은 LLM 출력의 시간 정밀도가 낮아 0.2로 완화
 - 그 외는 기본 0.3
-
-severity 가중·Cohen's κ는 v1.1 (현재 모든 라벨이 mid 통일).
 """
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ POINT_DIMENSIONS: frozenset[Dimension] = frozenset({"filler"})
 # ASR ±20ms 정밀도와 정합시키기 위함. 음성 disfluency 표준은 200~500ms이지만 우리
 # 라벨이 1초 단위라 ±1s 채택 (다른 burst를 흡수하지 않는 sweet spot).
 FILLER_TOLERANCE_SEC = 1.0
+
+# cps 라벨도 1초 단위 라운딩이라 양쪽 ±1s 확장 후 IoU 매칭. 라벨 길이가 4~8초로 충분히
+# 길어 확장에 의한 IoU 분모 증가 영향이 작음.
+CPS_TOLERANCE_SEC = 1.0
 
 # IoU 매칭 차원의 임계. content_gap은 LLM 출력의 시간 정밀도가 떨어져 완화.
 # IoU 매칭 차원만 명시 — POINT_DIMENSIONS 차원은 들어가지 않음 (직접 조회 시 KeyError로 빠른 실패).
@@ -175,6 +179,51 @@ def compute_filler_metrics(
     )
 
 
+def compute_cps_metrics(
+    cps_labels: list[GoldenLabel], events: list[Any]
+) -> DimensionMetrics:
+    """cps 차원 단독 평가. 라벨 ±CPS_TOLERANCE_SEC 확장 IoU + kind 일치 greedy 1:1.
+
+    `compute_metrics`의 cps 분기와 외부 평가 스크립트에서 동일한 산식을 공유한다.
+    kind가 다른 (label, detected) 쌍은 IoU 계산 전에 후보에서 제외 → 반대 방향
+    오분류는 절대 TP로 잡히지 않는다.
+    """
+    expanded: list[Interval] = [
+        (lbl.start - CPS_TOLERANCE_SEC, lbl.end + CPS_TOLERANCE_SEC)
+        for lbl in cps_labels
+    ]
+    detected: list[Interval] = [(e.start, e.end) for e in events]
+    threshold = DIM_IOU_THRESHOLD["cps"]
+
+    candidates: list[tuple[int, int, float]] = []
+    for li, lab in enumerate(expanded):
+        for di, det in enumerate(detected):
+            if cps_labels[li].kind != events[di].kind:
+                continue
+            v = iou(lab, det)
+            if v >= threshold:
+                candidates.append((li, di, v))
+    candidates.sort(key=lambda x: -x[2])
+
+    matched_labels: set[int] = set()
+    matched_detected: set[int] = set()
+    matches: list[tuple[int, int, float]] = []
+    for li, di, v in candidates:
+        if li in matched_labels or di in matched_detected:
+            continue
+        matched_labels.add(li)
+        matched_detected.add(di)
+        matches.append((li, di, v))
+
+    return DimensionMetrics(
+        dimension="cps",
+        tp=len(matches),
+        fp=len(detected) - len(matched_detected),
+        fn=len(expanded) - len(matched_labels),
+        iou_sum=sum(m[2] for m in matches),
+    )
+
+
 def _compute_iou_metrics(
     dim: Dimension, dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
@@ -210,6 +259,9 @@ def compute_metrics(state: AnalysisState, labels: list[GoldenLabel]) -> EvalRepo
 
         if dim in POINT_DIMENSIONS:
             report.per_dimension[dim] = compute_filler_metrics(dim_labels, events)
+        elif dim == "cps":
+            cps_label_objs = [lbl for lbl in labels if lbl.dimension == "cps"]
+            report.per_dimension[dim] = compute_cps_metrics(cps_label_objs, events)
         else:
             report.per_dimension[dim] = _compute_iou_metrics(dim, dim_labels, events)
 
