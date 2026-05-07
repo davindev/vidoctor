@@ -33,10 +33,24 @@ async def detect_filler(state: AnalysisState) -> dict:
 
 
 async def detect_cps(state: AnalysisState) -> dict:
-    from vidoctor.audio.cps import detect_cps_anomalies
+    """카테고리별 정책 분기: vlog는 F0 multi-feature 결합, lecture/other는 cps 단독.
+
+    vlog는 야외·일상 녹화 환경에서 배경 노이즈·다른 화자 발화가 ASR 토큰에 섞여 들어
+    cps 측정을 오염한다. F0 결합은 메인 화자만이 강한 voiced 톤 신호를 갖는 특성을 이용해
+    노이즈 영역을 자동 cut — vlog F1 0.533 → 0.667(P 0.500 → 0.800). lecture는 통제된
+    녹화 환경이라 노이즈 거의 없고 발화 톤이 단조로워 F0 결합 시 라벨이 F0 임계 미달로
+    오히려 cut → cps 단독이 robust. other는 도메인 다양성으로 보수 fallback.
+    """
+    from vidoctor.audio.cps import detect_cps_anomalies, detect_cps_with_audio
 
     transcript = state.get("transcript", [])
-    return {"cps_anomalies": detect_cps_anomalies(transcript)}
+    if state["category"] != "vlog":
+        return {"cps_anomalies": detect_cps_anomalies(transcript)}
+
+    events = await asyncio.to_thread(
+        detect_cps_with_audio, transcript, state["video_path"]
+    )
+    return {"cps_anomalies": events}
 
 
 async def detect_dead_zone(state: AnalysisState) -> dict:

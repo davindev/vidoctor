@@ -48,7 +48,7 @@ REPETITION_GAP_THRESHOLD_SEC = 0.5
 _PUNCT_RE = re.compile(r"[^\w가-힣]")
 
 
-def _normalize(text: str) -> str:
+def normalize_word(text: str) -> str:
     return _PUNCT_RE.sub("", text).strip()
 
 
@@ -60,7 +60,7 @@ def detect_filler_events(words: list[Word]) -> list[FillerEvent]:
     가정이 강조/명령(예: 강아지 이름 호출, "짜잔 짜잔") 케이스에 뒤집힘.
     강의에서도 강조용 반복이 자연스러워 두 카테고리 모두 동일 정책.
     """
-    normed = [(w, _normalize(w.text)) for w in words]
+    normed = [(w, normalize_word(w.text)) for w in words]
     events: list[FillerEvent] = []
 
     i = 0
