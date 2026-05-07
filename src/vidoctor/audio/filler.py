@@ -71,6 +71,8 @@ def detect_filler_events(words: list[Word]) -> list[FillerEvent]:
             continue
 
         run_end = i + 1
+        # 같은 어휘가 임계 이내 인접 → 한 머뭇거림 burst로 묶어 단일 finding으로 등록.
+        # "한 번의 머뭇거림 = 사용자에게 알림 1건" UX 의도.
         while (
             run_end < len(words)
             and normed[run_end][1] == norm
