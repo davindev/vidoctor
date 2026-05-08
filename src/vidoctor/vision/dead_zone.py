@@ -152,10 +152,11 @@ def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             if prev_gray is not None:
+                # cv2 stub은 flow=None을 거부 — 빈 ndarray placeholder 전달, OpenCV가 새 buffer alloc.
                 flow = cv2.calcOpticalFlowFarneback(
                     prev_gray,
                     gray,
-                    None,
+                    np.empty(0, dtype=np.float32),
                     _FARNEBACK_PYR_SCALE,
                     _FARNEBACK_LEVELS,
                     _FARNEBACK_WINSIZE,
