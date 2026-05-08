@@ -69,6 +69,20 @@ _LABEL_EXTRA_FIELDS: dict[str, tuple[str, ...]] = {
 # content_gap.description 같이 긴 텍스트는 버튼 라벨에서 truncate.
 _LABEL_EXTRA_MAX_LEN = 30
 
+# GazeEvent.direction은 강사 입장(yaw<0=left=강사 좌측). 카메라가 강사를 비추므로 시청자
+# 가시 영역에선 좌우 반전이 자연스러움. 한국어 시청자 입장 표기로 변환.
+_GAZE_DIRECTION_LABEL: dict[str, str] = {
+    "front": "정면",
+    "left": "오른쪽",
+    "right": "왼쪽",
+    "up": "위",
+    "down": "아래",
+    "left_up": "오른쪽 위",
+    "left_down": "오른쪽 아래",
+    "right_up": "왼쪽 위",
+    "right_down": "왼쪽 아래",
+}
+
 # 5차원 finding 이벤트의 union — start/end/severity property 직접 접근을 타입 안전하게.
 _FindingEvent = FillerEvent | CPSEvent | DeadZoneEvent | GazeEvent | ContentGapEvent
 
@@ -132,12 +146,16 @@ def _event_button_label(dim: str, ev: _FindingEvent) -> str:
     extras: list[str] = []
     for field in _LABEL_EXTRA_FIELDS.get(dim, ()):
         v = getattr(ev, field, None)
-        if v:
+        if not v:
+            continue
+        if dim == "gaze" and field == "direction":
+            text = _GAZE_DIRECTION_LABEL.get(str(v), str(v))
+        else:
             text = str(v)
-            extras.append(
-                text if len(text) <= _LABEL_EXTRA_MAX_LEN
-                else text[: _LABEL_EXTRA_MAX_LEN - 1] + "…"
-            )
+        extras.append(
+            text if len(text) <= _LABEL_EXTRA_MAX_LEN
+            else text[: _LABEL_EXTRA_MAX_LEN - 1] + "…"
+        )
     suffix = f" · {' '.join(extras)}" if extras else ""
     return f"{_fmt_time(ev.start)}–{_fmt_time(ev.end)} · {ev.severity}{suffix}"
 
