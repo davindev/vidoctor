@@ -24,6 +24,7 @@ dependencies = [
     "mlflow>=2.18.0,<3",  # 3.x 보안 미들웨어가 localhost-only인데도 403 반환해 회피
     "librosa>=0.11.0",
     "praat-parselmouth>=0.4.7",
+    "silero-vad>=6.2.1",
 ]
 
 [dependency-groups]
