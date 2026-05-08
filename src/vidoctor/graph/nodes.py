@@ -7,7 +7,7 @@ detection 노드는 자기 차원만 책임진다 — detect_gaze / detect_conte
 - transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment)
 - detect_filler: 한국어 filler 사전 + 정규식
 - detect_cps: Net CPS 슬라이딩 윈도우 (5s/1s, pause >200ms 제외)
-- detect_dead_zone: OpenCV diff + SSIM + ASR 무발화
+- detect_dead_zone: Silero VAD 무발화 + Optical flow magnitude per-frame max
 - detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose
 - detect_content_gap: GPT-4o Vision multi-image batch + ASR
 - generate_suggestions: GPT-4o-mini로 finding 통합 → 개선 제안
@@ -56,9 +56,8 @@ async def detect_cps(state: AnalysisState) -> dict:
 async def detect_dead_zone(state: AnalysisState) -> dict:
     from vidoctor.vision.dead_zone import detect_dead_zone_events
 
-    transcript = state.get("transcript", [])
     events = await detect_dead_zone_events(
-        state["video_path"], transcript, state["category"]
+        state["video_path"], state["category"]
     )
     return {"dead_zones": events}
 

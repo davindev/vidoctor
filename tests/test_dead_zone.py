@@ -1,6 +1,6 @@
 """Dead zone 검출 테스트.
 
-순수 함수(_silent_intervals, _intersect_intervals) 단위 + 합성 영상으로 통합 검증.
+VAD silent + Optical flow 단위 + 합성 영상 통합 검증.
 """
 
 from pathlib import Path
@@ -8,79 +8,53 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests._helpers import _w, write_video
+from tests._helpers import write_video
+from vidoctor.graph.state import Category
 from vidoctor.vision.dead_zone import (
     _detect_dead_zone_sync,
-    _intersect_intervals,
+    _flow_median_in,
     _Interval,
-    _silent_intervals,
+    _silent_intervals_from_audio,
 )
 
+
 # ---------------------------------------------------------------------------
-# _silent_intervals
+# _silent_intervals_from_audio (Silero VAD wrapper)
 # ---------------------------------------------------------------------------
 
 
-def test_silent_intervals_empty_transcript_full_video():
-    silent = _silent_intervals([], 10.0)
+def test_silent_intervals_empty_audio_full_video():
+    silent = _silent_intervals_from_audio(np.array([], dtype=np.float32), 10.0)
     assert silent == [_Interval(0.0, 10.0)]
 
 
-def test_silent_intervals_empty_transcript_zero_duration():
-    assert _silent_intervals([], 0.0) == []
+def test_silent_intervals_empty_audio_zero_duration():
+    assert _silent_intervals_from_audio(np.array([], dtype=np.float32), 0.0) == []
 
 
-def test_silent_intervals_short_gap_not_detected():
-    words = [_w("a", 0.0, 0.5), _w("b", 0.7, 1.0)]
-    assert _silent_intervals(words, 1.0) == []
-
-
-def test_silent_intervals_long_gap_detected():
-    words = [_w("a", 0.0, 0.5), _w("b", 5.0, 5.5)]
-    silent = _silent_intervals(words, 6.0)
-    assert _Interval(0.5, 5.0) in silent
-
-
-def test_silent_intervals_leading_silence():
-    words = [_w("a", 5.0, 5.5)]
-    silent = _silent_intervals(words, 6.0)
-    assert _Interval(0.0, 5.0) in silent
-
-
-def test_silent_intervals_trailing_silence():
-    words = [_w("a", 0.0, 0.5)]
-    silent = _silent_intervals(words, 10.0)
-    assert _Interval(0.5, 10.0) in silent
+def test_silent_intervals_pure_silence_audio():
+    silent_audio = np.zeros(16000 * 5, dtype=np.float32)
+    silent = _silent_intervals_from_audio(silent_audio, 5.0)
+    assert silent == [_Interval(0.0, 5.0)]
 
 
 # ---------------------------------------------------------------------------
-# _intersect_intervals
+# _flow_median_in
 # ---------------------------------------------------------------------------
 
 
-def test_intersect_no_overlap():
-    a = [_Interval(0.0, 5.0)]
-    b = [_Interval(10.0, 15.0)]
-    assert _intersect_intervals(a, b) == []
+def test_flow_median_in_returns_window_median():
+    curr = np.array([1.0, 2.0, 3.0, 4.0])
+    flows = np.array([0.05, 0.1, 0.5, 0.2])
+    # 2~4s window: 0.1, 0.5, 0.2 → median 0.2
+    assert _flow_median_in(curr, flows, 2.0, 4.0) == pytest.approx(0.2)
 
 
-def test_intersect_full_overlap():
-    a = [_Interval(0.0, 10.0)]
-    b = [_Interval(0.0, 10.0)]
-    assert _intersect_intervals(a, b) == [_Interval(0.0, 10.0)]
-
-
-def test_intersect_partial_overlap():
-    a = [_Interval(0.0, 10.0), _Interval(20.0, 30.0)]
-    b = [_Interval(5.0, 25.0)]
-    result = _intersect_intervals(a, b)
-    assert _Interval(5.0, 10.0) in result
-    assert _Interval(20.0, 25.0) in result
-
-
-def test_intersect_empty():
-    assert _intersect_intervals([], [_Interval(0.0, 1.0)]) == []
-    assert _intersect_intervals([_Interval(0.0, 1.0)], []) == []
+def test_flow_median_in_no_samples_returns_none():
+    curr = np.array([10.0, 20.0])
+    flows = np.array([0.01, 0.01])
+    # 0~5s 안 샘플 없음 → None (caller가 명시적으로 가드)
+    assert _flow_median_in(curr, flows, 0.0, 5.0) is None
 
 
 # ---------------------------------------------------------------------------
@@ -103,28 +77,32 @@ def _make_test_video(path: Path, duration_sec: float = 10.0, static_from: float 
 
 @pytest.fixture
 def synthetic_video(tmp_path: Path) -> Path:
-    """0~2s noise + 2~10s 정적 영상 (총 10s)."""
+    """0~2s noise + 2~10s 정적 영상. audio 없음 → 영상 전체 무발화 처리."""
     video = tmp_path / "test.mp4"
     _make_test_video(video, duration_sec=10.0, static_from=2.0)
     assert video.exists() and video.stat().st_size > 0
     return video
 
 
-def test_detect_lecture_threshold_skips_short_static(synthetic_video: Path):
-    # 강의 임계 20s, 합성 영상은 8s 정적 → 검출 안 함
-    events = _detect_dead_zone_sync(str(synthetic_video), [], "lecture")
+@pytest.mark.parametrize("category", ["lecture", "vlog", "other"])
+def test_detect_finds_static_with_silent_audio(synthetic_video: Path, category: Category):
+    # 합성 영상 무성 → 영상 전체 무발화. 정적 부분 flow median ≈ 0 → 통과.
+    events = _detect_dead_zone_sync(str(synthetic_video), category)
+    assert len(events) >= 1
+
+
+def test_detect_noisy_video_blocked_by_flow_gate(tmp_path: Path):
+    # 영상 전체 noise (정적 구간 없음) → flow median 큼 → 차단.
+    video = tmp_path / "noisy.mp4"
+    _make_test_video(video, duration_sec=10.0, static_from=999.0)
+    events = _detect_dead_zone_sync(str(video), "vlog")
     assert events == []
 
 
-def test_detect_vlog_threshold_finds_static(synthetic_video: Path):
-    # 브이로그 임계 5s, 8s 정적 + 무발화 → 검출
-    events = _detect_dead_zone_sync(str(synthetic_video), [], "vlog")
-    assert len(events) >= 1
-    assert events[0].end - events[0].start >= 5.0
-
-
-def test_detect_speech_during_static_blocks_detection(synthetic_video: Path):
-    # 정적 구간(2~10s)에 발화가 채워져 있으면 dead zone 아님
-    transcript = [_w("말함", t, t + 0.4) for t in np.arange(2.0, 10.0, 0.5)]
-    events = _detect_dead_zone_sync(str(synthetic_video), transcript, "vlog")
+@pytest.mark.parametrize("category", ["lecture", "vlog", "other"])
+def test_detect_short_video_below_min_duration(tmp_path: Path, category: Category):
+    # 영상 4s — min_duration 5s 미만이라 어떤 카테고리도 검출 안 함.
+    video = tmp_path / "short.mp4"
+    _make_test_video(video, duration_sec=4.0, static_from=0.0)
+    events = _detect_dead_zone_sync(str(video), category)
     assert events == []

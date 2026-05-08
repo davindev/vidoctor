@@ -1,53 +1,73 @@
 """시각 dead zone 검출.
 
-화면 변화·발화 모두 정지된 구간을 검출. 단일 시각 신호(SSIM)로는 강의의 슬라이드
-미세 변화·브이로그의 인물 미세 움직임에서 모두 취약 → ASR 무발화 구간과 결합한
-시각·청각 2축 판정.
+화면 변화·발화 모두 정지된 구간 검출.
 
-알고리즘:
-1. 영상 프레임 2 fps로 샘플링 + 240p 다운스케일 + grayscale 변환
-2. 인접 샘플 프레임 SSIM 계산 → SSIM ≥ 0.95 연속 구간을 시각 정적으로 판정
-3. transcript 단어 사이 1초+ gap을 무발화 구간으로 추출
-4. 두 구간의 교집합 → 카테고리별 최소 길이 임계 적용
+1. **Silero VAD**로 무발화 구간 추출. 환경 소음(차·바람·음악)은 비음성으로 자동 무시.
+   배경의 다른 사람 목소리는 발화로 잡힘 — 화자 분리는 별도 차원.
+2. 무발화 구간 중 카테고리별 `MIN_DURATION_SEC` 이상을 dead zone 후보.
+3. **Optical flow magnitude의 per-frame max** 시계열로 후보 안 화면 움직임 측정. 평균은
+   화면 작은 영역(예: lecture 우하단 페이스캠) 움직임이 큰 정적 영역(슬라이드)에 묻혀
+   사용자 인지 "화면 움직임"을 못 잡음. per-frame max는 한 픽셀이라도 크게 움직이면
+   잡혀 작은 영역 움직임에 robust.
+4. 후보 안 per-frame max 시계열의 median이 카테고리별 임계 이하일 때 시각 정적으로 인정.
 
-상수는 휴리스틱 시작값. 골든셋 라벨링 후 우선 튜닝:
-  1순위: CATEGORY_MIN_DURATION_SEC — 라벨링된 dead zone 길이 분포 기반
-  2순위: SSIM_STATIC_THRESHOLD — 정적 vs 미세 변화의 분리 정확도 측정
-  3순위: ASR_SILENCE_THRESHOLD_SEC — 한국어 발화 휴지 분포 기반
+카테고리별 임계가 갈리는 이유: lecture는 삼각대 고정이라 정적 floor가 0에 가깝고,
+vlog는 핸드헬드라 정적이어도 카메라 미세 흔들림으로 floor가 2~3 깔림. 단일 절대 임계로
+양쪽 baseline 위 신호 분리 불가능.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from itertools import pairwise
+from functools import lru_cache
+from typing import Any
 
 import cv2
 import numpy as np
-from skimage.metrics import structural_similarity
+import torch
+import whisperx
+from silero_vad import get_speech_timestamps, load_silero_vad
 
-from vidoctor.graph.state import Category, DeadZoneEvent, Word
+from vidoctor.graph.state import Category, DeadZoneEvent
 
-# 카테고리별 dead zone 최소 지속 시간. 강의는 슬라이드 한 장 오래 보여주는 게 정상이라
-# 임계 보수적, 브이로그는 5초 정적도 사고에 가까워서 임계 좁음.
-CATEGORY_MIN_DURATION_SEC: dict[Category, float] = {
-    "lecture": 20.0,
-    "vlog": 5.0,
-    "other": 15.0,
+
+@dataclass(frozen=True)
+class _CategoryConfig:
+    min_duration_sec: float
+    flow_max_threshold: float
+
+
+# 라벨 표본 분리 sweet spot:
+#   lecture: TP 0.32 / 페이스캠 FP 0.98 → 임계 0.5
+#   vlog:    TP 2.3·3.4 / FP_가짜 21.6 → 임계 5.0
+#   other:   라벨 없음 — vlog 기준 보수적
+CATEGORY_CONFIG: dict[Category, _CategoryConfig] = {
+    "lecture": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=0.5),
+    "vlog": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=5.0),
+    "other": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=5.0),
 }
 
-# 프레임 샘플링 fps. 2 fps = 0.5초마다 1프레임.
-# 더 높이면 정확도 ↑ but 처리 시간 ↑. dead zone은 5초+ 단위라 2 fps로 충분.
 FRAME_SAMPLE_FPS = 2.0
-
-# SSIM ≥ 이 값이면 시각 정적으로 판정. mp4v 압축 노이즈 감안한 보수적 값.
-SSIM_STATIC_THRESHOLD = 0.95
-
-# 단어 사이 gap > 이 값이면 무발화 구간. 자연스러운 휴지(0.5s 이내)는 발화의 일부로 간주.
-ASR_SILENCE_THRESHOLD_SEC = 1.0
-
-# SSIM 계산용 다운스케일 해상도. dead zone 검출에 고해상도 불필요.
 DOWNSAMPLE_HEIGHT = 240
+
+VAD_SAMPLE_RATE = 16000
+VAD_MIN_SILENCE_MS = 1000
+
+# Farneback dense flow 파라미터 (OpenCV 권장 default 그대로). cv2가 kwargs 미지원이라
+# named 상수로 분리해 호출부 가독성 확보.
+_FARNEBACK_PYR_SCALE = 0.5
+_FARNEBACK_LEVELS = 3
+_FARNEBACK_WINSIZE = 15
+_FARNEBACK_ITERATIONS = 3
+_FARNEBACK_POLY_N = 5
+_FARNEBACK_POLY_SIGMA = 1.2
+_FARNEBACK_FLAGS = 0
+
+# whisperx.load_audio 내부 ffmpeg가 audio 트랙 없는 영상에 대해 던지는 메시지 marker.
+# 이 marker가 포함된 RuntimeError만 무성 영상으로 fallback하고, 다른 RuntimeError(파일
+# 손상·ffmpeg 미설치 등)는 그대로 raise해 진단 가능하게 둔다.
+_FFMPEG_NO_STREAM_MARKER = "Output file does not contain any stream"
 
 
 @dataclass(frozen=True)
@@ -56,33 +76,47 @@ class _Interval:
     end: float
 
 
-def _silent_intervals(words: list[Word], video_duration: float) -> list[_Interval]:
-    """transcript에서 무발화 구간 추출.
+@lru_cache(maxsize=1)
+def _vad_model() -> Any:
+    return load_silero_vad()
 
-    영상 시작 ~ 첫 단어 / 단어 사이 긴 gap / 마지막 단어 ~ 영상 끝.
-    transcript가 비어 있으면 영상 전체가 무발화.
-    """
-    if not words:
+
+def _silent_intervals_from_audio(
+    audio: np.ndarray, video_duration: float
+) -> list[_Interval]:
+    """Silero VAD로 발화 구간 추출 → 영상 - 발화 = 무발화 구간."""
+    if audio.size == 0:
         return [_Interval(0.0, video_duration)] if video_duration > 0 else []
 
-    intervals: list[_Interval] = []
+    audio_tensor = torch.from_numpy(audio).float()
+    speech_ts: list[dict[str, float]] = get_speech_timestamps(
+        audio_tensor,
+        _vad_model(),
+        sampling_rate=VAD_SAMPLE_RATE,
+        min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+        return_seconds=True,
+    )
 
-    if words[0].start > ASR_SILENCE_THRESHOLD_SEC:
-        intervals.append(_Interval(0.0, words[0].start))
+    if not speech_ts:
+        return [_Interval(0.0, video_duration)] if video_duration > 0 else []
 
-    for prev, curr in pairwise(words):
-        gap = curr.start - prev.end
-        if gap > ASR_SILENCE_THRESHOLD_SEC:
-            intervals.append(_Interval(prev.end, curr.start))
+    silents: list[_Interval] = []
+    prev_end = 0.0
+    for t in speech_ts:
+        s, e = float(t["start"]), float(t["end"])
+        if s > prev_end:
+            silents.append(_Interval(prev_end, s))
+        prev_end = max(prev_end, e)
+    if video_duration > prev_end:
+        silents.append(_Interval(prev_end, video_duration))
+    return silents
 
-    if video_duration - words[-1].end > ASR_SILENCE_THRESHOLD_SEC:
-        intervals.append(_Interval(words[-1].end, video_duration))
 
-    return intervals
+def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
+    """샘플 프레임 인접쌍 optical flow magnitude per-frame max 시계열.
 
-
-def _static_intervals(video_path: str) -> tuple[list[_Interval], float]:
-    """영상에서 SSIM 기반 시각 정적 구간 추출. (intervals, total_duration) 반환."""
+    Farneback dense flow → 픽셀별 (dx, dy) 벡터 → magnitude → 프레임 안 max.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
@@ -91,22 +125,17 @@ def _static_intervals(video_path: str) -> tuple[list[_Interval], float]:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps if fps > 0 else 0.0
-
         sample_step = max(int(round(fps / FRAME_SAMPLE_FPS)), 1)
 
-        intervals: list[_Interval] = []
+        curr_times: list[float] = []
+        flows: list[float] = []
         prev_gray: np.ndarray | None = None
-        prev_time = 0.0
-        is_static = False
-        static_start = 0.0
-        static_end = 0.0
 
         frame_idx = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-
             if frame_idx % sample_step != 0:
                 frame_idx += 1
                 continue
@@ -120,73 +149,83 @@ def _static_intervals(video_path: str) -> tuple[list[_Interval], float]:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
             if prev_gray is not None:
-                # full=False가 기본이라 float 반환이지만 pyright stub은 union으로 추론
-                ssim: float = structural_similarity(prev_gray, gray, data_range=255)  # pyright: ignore[reportAssignmentType]
-                if ssim >= SSIM_STATIC_THRESHOLD:
-                    # SSIM(prev, curr) ≥ 임계면 [prev_time, curr_time]이 정적.
-                    # 정적 구간 끝점은 마지막으로 임계 통과한 curr_time.
-                    if not is_static:
-                        static_start = prev_time
-                        is_static = True
-                    static_end = curr_time
-                elif is_static:
-                    intervals.append(_Interval(static_start, static_end))
-                    is_static = False
+                flow = cv2.calcOpticalFlowFarneback(
+                    prev_gray,
+                    gray,
+                    None,
+                    _FARNEBACK_PYR_SCALE,
+                    _FARNEBACK_LEVELS,
+                    _FARNEBACK_WINSIZE,
+                    _FARNEBACK_ITERATIONS,
+                    _FARNEBACK_POLY_N,
+                    _FARNEBACK_POLY_SIGMA,
+                    _FARNEBACK_FLAGS,
+                )
+                mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
+                curr_times.append(curr_time)
+                flows.append(float(mag.max()))
 
             prev_gray = gray
-            prev_time = curr_time
             frame_idx += 1
-
-        if is_static:
-            intervals.append(_Interval(static_start, static_end))
-
-        return intervals, duration
     finally:
         cap.release()
 
+    return (
+        np.asarray(curr_times, dtype=np.float64),
+        np.asarray(flows, dtype=np.float64),
+        duration,
+    )
 
-def _intersect_intervals(a: list[_Interval], b: list[_Interval]) -> list[_Interval]:
-    """정렬된 두 interval 리스트의 교집합. 투포인터 O(n+m)."""
-    result: list[_Interval] = []
-    i = j = 0
-    while i < len(a) and j < len(b):
-        ai, bj = a[i], b[j]
-        start = max(ai.start, bj.start)
-        end = min(ai.end, bj.end)
-        if start < end:
-            result.append(_Interval(start, end))
-        if ai.end < bj.end:
-            i += 1
-        else:
-            j += 1
-    return result
+
+def _flow_median_in(
+    curr_times: np.ndarray,
+    flows: np.ndarray,
+    start: float,
+    end: float,
+) -> float | None:
+    """주어진 시간 구간 안 flow 시계열의 median. 샘플 없으면 None."""
+    mask = (curr_times >= start) & (curr_times <= end)
+    if not mask.any():
+        return None
+    return float(np.median(flows[mask]))
+
+
+def _load_audio_or_empty(video_path: str) -> np.ndarray:
+    """audio 트랙 없는 영상은 빈 array fallback. 다른 ffmpeg 에러는 그대로 raise."""
+    try:
+        return whisperx.load_audio(video_path)
+    except RuntimeError as e:
+        if _FFMPEG_NO_STREAM_MARKER in str(e):
+            return np.array([], dtype=np.float32)
+        raise
 
 
 def _detect_dead_zone_sync(
     video_path: str,
-    transcript: list[Word],
     category: Category,
 ) -> list[DeadZoneEvent]:
-    static, duration = _static_intervals(video_path)
-    silent = _silent_intervals(transcript, duration)
-    overlap = _intersect_intervals(static, silent)
-
-    min_duration = CATEGORY_MIN_DURATION_SEC[category]
+    curr_times, flows, duration = _flow_series(video_path)
+    audio = _load_audio_or_empty(video_path)
+    silent = _silent_intervals_from_audio(audio, duration)
+    cfg = CATEGORY_CONFIG[category]
 
     events: list[DeadZoneEvent] = []
-    for iv in overlap:
-        if iv.end - iv.start >= min_duration:
-            events.append(DeadZoneEvent(start=iv.start, end=iv.end))
+    for iv in silent:
+        if iv.end - iv.start < cfg.min_duration_sec:
+            continue
+        median = _flow_median_in(curr_times, flows, iv.start, iv.end)
+        if median is None or median > cfg.flow_max_threshold:
+            continue
+        events.append(DeadZoneEvent(start=iv.start, end=iv.end))
     return events
 
 
 async def detect_dead_zone_events(
     video_path: str,
-    transcript: list[Word],
     category: Category,
 ) -> list[DeadZoneEvent]:
-    """영상 + transcript + 카테고리 → dead zone 이벤트 리스트.
+    """영상 + 카테고리 → dead zone 이벤트 리스트.
 
-    OpenCV·SSIM 처리는 sync·CPU bound이라 to_thread로 분리해 이벤트 루프 차단 방지.
+    OpenCV·flow·VAD 처리는 sync·CPU bound이라 to_thread로 분리해 이벤트 루프 차단 방지.
     """
-    return await asyncio.to_thread(_detect_dead_zone_sync, video_path, transcript, category)
+    return await asyncio.to_thread(_detect_dead_zone_sync, video_path, category)
