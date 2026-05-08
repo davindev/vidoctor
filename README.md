@@ -8,7 +8,7 @@ AI 영상 감수 에이전트 — 영상을 업로드하면 5차원으로 분석
 |---|---|---|
 | Filler | WhisperX(faster-whisper-large-v3-turbo + wav2vec2 정렬) + 한국어 사전·정규식 | 전체 |
 | 말 속도 (CPS) | Net CPS 슬라이딩 윈도우 (5s/1s), 영상 평균 대비 ±1.5σ + 평탄 영상 가드 | 전체 |
-| 시각 dead zone | OpenCV diff + SSIM + ASR 무발화, 카테고리별 임계값 | 전체 |
+| 시각 dead zone | Silero VAD 무발화 ∩ Optical flow per-frame max median, 카테고리별 임계값 | 전체 |
 | 시선 이탈 | MediaPipe Tasks FaceLandmarker + BlazeFace 자동 ROI + cv2.solvePnP head pose, 영상 baseline 차감 후 deviation 임계 | 강의 |
 | 내용 공백 | GPT-4o Vision multi-image batch + ASR 동시 input + rubric | 강의·기타 |
 
