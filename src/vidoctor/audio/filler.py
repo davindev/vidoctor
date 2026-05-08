@@ -28,12 +28,14 @@ from vidoctor.graph.state import FillerEvent, Word
 # false positive 다수. "자"는 주의 환기 표지("자, 이제…")로 한국어 구어에서 자주 쓰여 포함.
 FILLERS: frozenset[str] = frozenset(
     {
-        # 명확형
+        # 명확형 단음절·지시사·환기 표지. 발화 길이가 길수록 ASR 토큰화 안정 —
+        # lecture의 의도적 늘임("음...")은 잡히고, vlog 짧은 burst(0.1~0.3s)는
+        # 정규화 흡수되어 detection input 부재. 후자는 v1.1 자체 fine-tune 영역.
         "어", "음", "으", "에",
         "그", "저",
         "자",
         "뭐", "뭐지", "뭐랄까",
-        # 모호형 (일반 단어로도 쓰임)
+        # 모호형 (일반 단어로도 쓰임 — 머뭇거림 의도일 때만 의미)
         "이제", "인제",
         "막", "좀", "약간",
     }
