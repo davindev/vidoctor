@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from vidoctor.vision.gaze import (
+    _MODEL_POINTS,
     PITCH_THRESHOLD_DEG,
     YAW_THRESHOLD_DEG,
     _is_off,
@@ -224,6 +225,60 @@ def test_solve_head_pose_front_facing_returns_small_yaw_pitch():
     yaw, pitch = pose
     assert abs(yaw) < YAW_THRESHOLD_DEG
     assert abs(pitch) < PITCH_THRESHOLD_DEG
+
+
+def _project_rotated_model(rx_deg: float, ry_deg: float) -> tuple[np.ndarray, int, int]:
+    """X·Y축 회전 후 _MODEL_POINTS를 카메라 image plane에 투영. 합성 PnP 입력."""
+    import cv2
+
+    width, height = 640, 480
+    focal = float(width)
+    camera_matrix = np.array(
+        [[focal, 0, width / 2.0], [0, focal, height / 2.0], [0, 0, 1.0]], dtype=np.float64
+    )
+    dist = np.zeros((4, 1), dtype=np.float64)
+    rvec, _ = cv2.Rodrigues(np.array([np.radians(rx_deg), np.radians(ry_deg), 0.0]))
+    tvec = np.array([0.0, 0.0, 1000.0], dtype=np.float64)
+    pts_2d, _ = cv2.projectPoints(_MODEL_POINTS, rvec, tvec, camera_matrix, dist)
+    return pts_2d.reshape(-1, 2), width, height
+
+
+def test_solve_head_pose_head_down_returns_positive_pitch():
+    # 머리 아래(턱→가슴) = X축 양 방향 회전 → pitch 양수. _DIRECTIONS의 (0,1)="down"과 일치.
+    pts, w, h = _project_rotated_model(rx_deg=20.0, ry_deg=0.0)
+    pose = _solve_head_pose(pts, w, h)
+    assert pose is not None
+    yaw, pitch = pose
+    assert abs(yaw) < 0.5
+    assert pitch == pytest.approx(20.0, abs=0.5)
+
+
+def test_solve_head_pose_head_up_returns_negative_pitch():
+    pts, w, h = _project_rotated_model(rx_deg=-20.0, ry_deg=0.0)
+    pose = _solve_head_pose(pts, w, h)
+    assert pose is not None
+    yaw, pitch = pose
+    assert abs(yaw) < 0.5
+    assert pitch == pytest.approx(-20.0, abs=0.5)
+
+
+def test_solve_head_pose_head_right_returns_positive_yaw():
+    # 머리 우측(강사 입장) = Y축 양 방향 회전 → yaw 양수. _DIRECTIONS의 (1,0)="right"와 일치.
+    pts, w, h = _project_rotated_model(rx_deg=0.0, ry_deg=20.0)
+    pose = _solve_head_pose(pts, w, h)
+    assert pose is not None
+    yaw, pitch = pose
+    assert yaw == pytest.approx(20.0, abs=0.5)
+    assert abs(pitch) < 0.5
+
+
+def test_solve_head_pose_head_left_returns_negative_yaw():
+    pts, w, h = _project_rotated_model(rx_deg=0.0, ry_deg=-20.0)
+    pose = _solve_head_pose(pts, w, h)
+    assert pose is not None
+    yaw, pitch = pose
+    assert yaw == pytest.approx(-20.0, abs=0.5)
+    assert abs(pitch) < 0.5
 
 
 # ---------------------------------------------------------------------------
