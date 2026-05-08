@@ -23,6 +23,7 @@ from vidoctor.vision.gaze import (
     _PoseSample,
     _samples_to_events,
     _solve_head_pose,
+    _subtract_baseline,
     detect_gaze_events,
 )
 
@@ -116,7 +117,7 @@ def test_samples_all_front_no_event():
 
 
 def test_samples_short_off_below_min_duration_skipped():
-    # 0.4s 이탈은 MIN_DURATION_SEC(1.0s) 미만 → 이벤트 없음.
+    # 이탈 지속 0.2s가 MIN_DURATION_SEC 미만 → 이벤트 없음.
     samples = [_front(0.0), _off_right(0.2), _off_right(0.4), _front(0.6), _front(1.2)]
     assert _samples_to_events(samples) == []
 
@@ -131,7 +132,7 @@ def test_samples_long_off_emits_event_with_direction():
 
 
 def test_samples_short_front_blip_merges_within_gap():
-    # 중간 한 프레임만 정면(0.4s 갭) → MERGE_GAP_SEC(0.5s) 이내라 같은 이벤트로 묶임.
+    # 중간 한 프레임만 정면(0.8s 갭) → MERGE_GAP_SEC 이내라 같은 이벤트로 묶임.
     samples = [
         _off_left(0.0),
         _off_left(0.4),
@@ -163,6 +164,39 @@ def test_samples_long_front_gap_splits_events():
     assert len(events) == 2
     assert events[0].direction == "right"
     assert events[1].direction == "left"
+
+
+# ---------------------------------------------------------------------------
+# _subtract_baseline
+# ---------------------------------------------------------------------------
+
+
+def test_subtract_baseline_empty_returns_empty():
+    assert _subtract_baseline([]) == ([], 0.0, 0.0)
+
+
+def test_subtract_baseline_centers_yaw_pitch_on_median():
+    samples = [
+        _PoseSample(t=0.0, yaw=2.0, pitch=-12.0),
+        _PoseSample(t=1.0, yaw=3.0, pitch=-10.0),
+        _PoseSample(t=2.0, yaw=4.0, pitch=-9.0),
+        _PoseSample(t=3.0, yaw=5.0, pitch=-8.0),
+        _PoseSample(t=4.0, yaw=6.0, pitch=-6.0),
+    ]
+    out, by, bp = _subtract_baseline(samples)
+    assert (by, bp) == (4.0, -9.0)
+    assert [s.yaw for s in out] == [-2.0, -1.0, 0.0, 1.0, 2.0]
+    assert [s.pitch for s in out] == [-3.0, -1.0, 0.0, 1.0, 3.0]
+
+
+def test_subtract_baseline_robust_to_outlier():
+    # 짧은 시선 이탈(1개 큰 yaw)이 baseline 추정을 오염시키지 않아야 — median 사용.
+    samples = [_PoseSample(t=float(i), yaw=0.0, pitch=0.0) for i in range(9)]
+    samples.append(_PoseSample(t=9.0, yaw=80.0, pitch=0.0))
+    out, by, _ = _subtract_baseline(samples)
+    assert by == 0.0
+    assert out[0].yaw == 0.0
+    assert out[-1].yaw == 80.0
 
 
 # ---------------------------------------------------------------------------
