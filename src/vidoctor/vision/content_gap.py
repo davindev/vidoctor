@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from typing import cast
 
@@ -25,7 +26,14 @@ from pydantic import BaseModel, Field
 from scenedetect import ContentDetector, SceneManager, open_video
 
 from vidoctor.graph.state import Category, ContentGapEvent, Word
-from vidoctor.llm import get_chat_model
+from vidoctor.llm import (
+    LLMCallMetrics,
+    estimate_cost_usd,
+    extract_token_usage,
+    get_chat_model,
+)
+
+_MODEL = "gpt-4o"
 
 SAMPLE_INTERVAL_SEC = 30.0
 TRANSCRIPT_WINDOW_SEC = 15.0
@@ -320,26 +328,54 @@ async def detect_content_gap_events(
     video_path: str,
     transcript: list[Word],
     category: Category,
-) -> list[ContentGapEvent]:
-    """영상 + transcript + 카테고리 → 내용 공백 이벤트 리스트.
+) -> tuple[list[ContentGapEvent], LLMCallMetrics]:
+    """영상 + transcript + 카테고리 → (이벤트 리스트, LLM 호출 메타).
 
     그래프가 lecture·other 카테고리에서만 이 노드를 호출한다. category는 rubric 선택용.
     LLM 응답의 [start, end]는 mismatch_keyword가 ASR transcript에서 발화된 시점으로
     좁혀 반환한다 — 의미는 LLM, 시간 anchor는 ASR이 책임.
+
+    LLMCallMetrics는 영상당 총 비용·latency 누적용으로 graph 노드가 state에 push.
     """
     samples = _sample_frames(video_path, transcript)
+    empty_metrics = LLMCallMetrics(
+        step="content_gap",
+        model=_MODEL,
+        cost_usd=0.0,
+        latency_sec=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
     if not samples:
-        return []
+        return [], empty_metrics
     message = _build_message(samples, _RUBRICS[category])
 
     # max_tokens=1024: issues 5건 × ~200자로 충분. structured output length limit
     # 도달로 인한 파싱 실패 차단.
-    model = get_chat_model(model="gpt-4o", temperature=0.0, max_tokens=1024)
-    structured = model.with_structured_output(_ContentGapResponse)
-    response = cast(_ContentGapResponse, await structured.ainvoke([message]))
+    model = get_chat_model(model=_MODEL, temperature=0.0, max_tokens=1024)
+    structured = model.with_structured_output(_ContentGapResponse, include_raw=True)
+
+    t0 = time.perf_counter()
+    result = await structured.ainvoke([message])
+    latency = time.perf_counter() - t0
+
+    raw = result["raw"] if isinstance(result, dict) else None
+    parsed = cast(
+        _ContentGapResponse,
+        result["parsed"] if isinstance(result, dict) else result,
+    )
+    prompt_tok, completion_tok = extract_token_usage(raw)
+    metrics = LLMCallMetrics(
+        step="content_gap",
+        model=_MODEL,
+        cost_usd=estimate_cost_usd(_MODEL, prompt_tok, completion_tok),
+        latency_sec=latency,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+    )
 
     events: list[ContentGapEvent] = []
-    for issue in response.issues:
+    for issue in parsed.issues:
         anchored = _anchor_to_asr(issue, transcript)
         if anchored is None:
             start, end = issue.start_sec, issue.end_sec
@@ -348,4 +384,4 @@ async def detect_content_gap_events(
         events.append(
             ContentGapEvent(start=start, end=end, description=issue.description)
         )
-    return events
+    return events, metrics

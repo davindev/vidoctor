@@ -38,6 +38,7 @@ from vidoctor.repository import (
     delete_video_for_analysis,
     fail_analysis,
     get_analysis_findings,
+    get_analysis_meta,
     get_analysis_storage_path,
     get_analysis_suggestions,
     insert_analysis,
@@ -202,6 +203,44 @@ def _cached_suggestions(analysis_id: str) -> list[Suggestion]:
     return get_analysis_suggestions(analysis_id)
 
 
+@st.cache_data(ttl=300)
+def _cached_analysis_meta(analysis_id: str) -> dict[str, Any]:
+    return get_analysis_meta(analysis_id)
+
+
+def _parse_iso(ts: str | None) -> float | None:
+    """Supabase ISO timestamp → unix seconds. None·파싱 실패면 None."""
+    if not ts:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _render_cost_latency_card(analysis_id: str) -> None:
+    meta = _cached_analysis_meta(analysis_id)
+    cost = meta.get("cost_usd")
+    started = _parse_iso(meta.get("started_at"))
+    finished = _parse_iso(meta.get("finished_at"))
+    latency_total = finished - started if started and finished else None
+
+    cols = st.columns(2)
+    cols[0].metric("LLM 비용", f"${cost:.4f}" if cost else "—")
+    cols[1].metric("처리 시간", f"{latency_total:.1f}s" if latency_total is not None else "—")
+
+    step_metrics = (meta.get("metadata") or {}).get("step_metrics") or []
+    if step_metrics:
+        with st.expander("LLM 호출 분리"):
+            for sm in step_metrics:
+                st.caption(
+                    f"**{sm['step']}** · {sm['model']} · "
+                    f"${sm['cost_usd']:.4f} · {sm['latency_sec']:.2f}s · "
+                    f"prompt {sm['prompt_tokens']} / completion {sm['completion_tokens']} tok"
+                )
+
+
 def _render_video_player(analysis_id: str) -> None:
     try:
         signed_url = _cached_video_url(analysis_id)
@@ -220,6 +259,7 @@ def _invalidate_caches() -> None:
     _cached_video_url.clear()
     _cached_findings.clear()
     _cached_suggestions.clear()
+    _cached_analysis_meta.clear()
 
 
 def _confirm_key(analysis_id: str) -> str:
@@ -374,6 +414,7 @@ with st.sidebar:
 selected_id = st.session_state.get("selected_analysis_id")
 if selected_id:
     _render_video_player(selected_id)
+    _render_cost_latency_card(selected_id)
     st.divider()
     st.subheader("개선 제안")
     _render_suggestions(selected_id)

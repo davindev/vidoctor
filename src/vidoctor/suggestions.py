@@ -6,6 +6,7 @@ rule 없이 차원 신호의 일반적 의미만 정의 — 영상 도메인은 
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import cast
 
@@ -21,7 +22,14 @@ from vidoctor.graph.state import (
     format_finding_ref,
     iter_dimension_events,
 )
-from vidoctor.llm import get_chat_model
+from vidoctor.llm import (
+    LLMCallMetrics,
+    estimate_cost_usd,
+    extract_token_usage,
+    get_chat_model,
+)
+
+_MODEL = "gpt-4o-mini"
 
 MAX_SUGGESTIONS = 8
 
@@ -182,24 +190,53 @@ def _build_message(collected: _CollectedFindings, state: AnalysisState) -> Human
     return HumanMessage(content="\n".join(blocks))
 
 
-async def build_suggestions(state: AnalysisState) -> list[Suggestion]:
-    """AnalysisState → 개선 제안 리스트.
+async def build_suggestions(
+    state: AnalysisState,
+) -> tuple[list[Suggestion], LLMCallMetrics]:
+    """AnalysisState → (개선 제안 리스트, LLM 호출 메타).
 
     finding 0건이면 LLM 호출 생략. 도메인 가정 없이 차원 신호만 전달해 카테고리별
     오버핏을 회피한다.
     """
+    empty_metrics = LLMCallMetrics(
+        step="suggestions",
+        model=_MODEL,
+        cost_usd=0.0,
+        latency_sec=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
     collected = _collect_findings(state)
     if not collected.findings:
-        return []
+        return [], empty_metrics
 
     message = _build_message(collected, state)
     # max_tokens=1024: 8 suggestion × 1~2문장(~120 token) + finding_refs JSON 여유.
     # temperature=0.3: 같은 finding에 매번 동일 표현만 나오지 않게 약간의 변동 허용.
-    model = get_chat_model(model="gpt-4o-mini", temperature=0.3, max_tokens=1024)
-    structured = model.with_structured_output(_SuggestionResponse)
-    response = cast(_SuggestionResponse, await structured.ainvoke([message]))
+    model = get_chat_model(model=_MODEL, temperature=0.3, max_tokens=1024)
+    structured = model.with_structured_output(_SuggestionResponse, include_raw=True)
 
-    return [
+    t0 = time.perf_counter()
+    result = await structured.ainvoke([message])
+    latency = time.perf_counter() - t0
+
+    raw = result["raw"] if isinstance(result, dict) else None
+    parsed = cast(
+        _SuggestionResponse,
+        result["parsed"] if isinstance(result, dict) else result,
+    )
+    prompt_tok, completion_tok = extract_token_usage(raw)
+    metrics = LLMCallMetrics(
+        step="suggestions",
+        model=_MODEL,
+        cost_usd=estimate_cost_usd(_MODEL, prompt_tok, completion_tok),
+        latency_sec=latency,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+    )
+
+    suggestions = [
         Suggestion(text=s.text, priority=s.priority, finding_refs=s.finding_refs)
-        for s in response.suggestions
+        for s in parsed.suggestions
     ]
+    return suggestions, metrics

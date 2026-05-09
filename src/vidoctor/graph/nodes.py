@@ -73,13 +73,14 @@ async def detect_content_gap(state: AnalysisState) -> dict:
     from vidoctor.vision.content_gap import detect_content_gap_events
 
     transcript = state.get("transcript", [])
-    events = await detect_content_gap_events(
+    events, metrics = await detect_content_gap_events(
         state["video_path"], transcript, state["category"]
     )
-    return {"content_gaps": events}
+    return {"content_gaps": events, "step_metrics": [metrics]}
 
 
 async def generate_suggestions(state: AnalysisState) -> dict:
     from vidoctor.suggestions import build_suggestions
 
-    return {"suggestions": await build_suggestions(state)}
+    suggestions, metrics = await build_suggestions(state)
+    return {"suggestions": suggestions, "step_metrics": [metrics]}

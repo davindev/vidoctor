@@ -1,19 +1,109 @@
-"""OpenAI LLM 래퍼 + Langfuse trace 통합.
+"""OpenAI LLM 래퍼 + Langfuse trace 통합 + 호출 비용·latency 측정 헬퍼.
 
 - LangChain ChatOpenAI에 Langfuse callback을 부착해 모든 호출이 자동 trace.
 - detect_content_gap (GPT-4o Vision), generate_suggestions (GPT-4o-mini)에서 공통 사용.
 - Langfuse v4부터 글로벌 클라이언트 초기화 후 CallbackHandler가 그 상태를 공유하는 구조.
+- LLMCallMetrics·estimate_cost_usd로 production·평가 양쪽이 동일 단가표 공유.
 """
 
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any, Literal, TypeVar, cast
 
+from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from pydantic import BaseModel
 
 from vidoctor.config import get_settings
+
+# 모델별 1M 토큰당 USD 단가 (input, output). OpenAI 공식가. 캐시·discount 미반영.
+# 정확 청구는 dashboard 확인. 새 모델 추가 시 여기 한 줄.
+_PRICE_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+}
+
+# step 추가 시 여기 한 줄 — 오타·불일치는 컴파일 타임에 검출.
+LLMStep = Literal["content_gap", "suggestions"]
+
+
+@dataclass(frozen=True)
+class LLMCallMetrics:
+    """LLM 1회 호출 메타."""
+
+    step: LLMStep
+    model: str
+    cost_usd: float
+    latency_sec: float
+    prompt_tokens: int
+    completion_tokens: int
+
+    @classmethod
+    def empty(cls, step: LLMStep, model: str) -> LLMCallMetrics:
+        """LLM 호출이 생략된 경우(샘플 0건 등)의 zero metrics."""
+        return cls(
+            step=step,
+            model=model,
+            cost_usd=0.0,
+            latency_sec=0.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+
+def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """단가표 기준 비용 추정. 모델이 표에 없으면 0.0."""
+    if model not in _PRICE_USD_PER_1M:
+        return 0.0
+    in_rate, out_rate = _PRICE_USD_PER_1M[model]
+    return (prompt_tokens / 1_000_000) * in_rate + (completion_tokens / 1_000_000) * out_rate
+
+
+def extract_token_usage(raw: Any) -> tuple[int, int]:
+    """LangChain AIMessage에서 (prompt_tokens, completion_tokens) 추출. 없으면 (0, 0)."""
+    usage = getattr(raw, "usage_metadata", None) or {}
+    return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+
+
+_R = TypeVar("_R", bound=BaseModel)
+
+
+async def invoke_structured_with_metrics(
+    chat_model: ChatOpenAI,
+    schema: type[_R],
+    messages: list[BaseMessage],
+    *,
+    step: LLMStep,
+) -> tuple[_R, LLMCallMetrics]:
+    """structured output ainvoke + latency·token usage 측정 → (parsed, metrics).
+
+    `with_structured_output(include_raw=True)`로 raw + parsed 둘 다 받아 raw에서
+    token 메타를 추출하고, 호출 latency는 perf_counter로 측정. content_gap·suggestions
+    가 동일 흐름이라 한 곳에 캡슐화.
+    """
+    structured = chat_model.with_structured_output(schema, include_raw=True)
+    t0 = time.perf_counter()
+    result = cast(dict, await structured.ainvoke(messages))
+    latency = time.perf_counter() - t0
+
+    raw = result["raw"]
+    parsed = cast(_R, result["parsed"])
+    prompt_tok, completion_tok = extract_token_usage(raw)
+    model_name = cast(str, chat_model.model)
+    metrics = LLMCallMetrics(
+        step=step,
+        model=model_name,
+        cost_usd=estimate_cost_usd(model_name, prompt_tok, completion_tok),
+        latency_sec=latency,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+    )
+    return parsed, metrics
 
 
 @lru_cache(maxsize=1)

@@ -239,13 +239,38 @@ def complete_analysis(
     video_id: str,
     state: AnalysisState,
     *,
-    cost_usd: float | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """성공 종료: findings·suggestions 저장 + analyses.finished_at + videos.status='completed'."""
+    """성공 종료: findings·suggestions 저장 + cost·step 메타 + analyses.finished_at +
+    videos.status='completed'.
+
+    cost·latency는 state.step_metrics(LLM 노드들이 누적)에서 합산해 cost_usd로 저장하고,
+    step별 분리 정보는 metadata.step_metrics JSON으로 보존 — UI가 분석 카드에 표시.
+    """
     save_findings(analysis_id, state)
     save_suggestions(analysis_id, state.get("suggestions", []) or [])
-    finalize_analysis(analysis_id, cost_usd=cost_usd, metadata=metadata)
+
+    step_metrics = state.get("step_metrics", []) or []
+    total_cost = sum(m.cost_usd for m in step_metrics)
+    merged_metadata: dict[str, Any] = dict(metadata or {})
+    if step_metrics:
+        merged_metadata["step_metrics"] = [
+            {
+                "step": m.step,
+                "model": m.model,
+                "cost_usd": round(m.cost_usd, 6),
+                "latency_sec": round(m.latency_sec, 3),
+                "prompt_tokens": m.prompt_tokens,
+                "completion_tokens": m.completion_tokens,
+            }
+            for m in step_metrics
+        ]
+
+    finalize_analysis(
+        analysis_id,
+        cost_usd=total_cost if step_metrics else None,
+        metadata=merged_metadata or None,
+    )
     update_video_status(video_id, "completed")
 
 
@@ -291,6 +316,23 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
         if dim in grouped:
             grouped[dim].append(_row_to_event(row))
     return grouped
+
+
+def get_analysis_meta(analysis_id: str) -> dict[str, Any]:
+    """UI 카드용 분석 메타 — cost_usd / 시작·종료 timestamp / step 분리 metadata.
+
+    finished_at - started_at으로 wall-clock 처리 시간을 계산하고, metadata.step_metrics는
+    LLM 호출 단계별 비용·token·latency를 분리 표시할 때 사용.
+    """
+    res = (
+        _client()
+        .table("analyses")
+        .select("started_at, finished_at, cost_usd, metadata")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    return cast(dict[str, Any], res.data or {})
 
 
 def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:

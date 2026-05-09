@@ -22,7 +22,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import mlflow
 
@@ -34,7 +34,11 @@ from vidoctor.config import get_settings  # noqa: E402
 from vidoctor.eval.labels import load_labels  # noqa: E402
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics  # noqa: E402
 from vidoctor.graph.state import Category, ContentGapEvent, Word  # noqa: E402
-from vidoctor.llm import get_chat_model  # noqa: E402
+from vidoctor.llm import (  # noqa: E402
+    estimate_cost_usd,
+    extract_token_usage,
+    get_chat_model,
+)
 from vidoctor.vision.content_gap import (  # noqa: E402
     _RUBRICS,
     JPEG_QUALITY,
@@ -50,13 +54,6 @@ from vidoctor.vision.content_gap import (  # noqa: E402
 )
 
 _EXPERIMENT_NAME = "vidoctor-content_gap"
-
-# 모델별 1M 토큰당 USD 단가. gpt-4o / gpt-4o-mini 기준 OpenAI 공식가 (2026-05).
-# 캐시·discount 미반영. 참고용 추정치 — 정확 청구는 dashboard 확인.
-_PRICE_USD_PER_1M: dict[str, tuple[float, float]] = {
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-}
 
 
 def _model_tag() -> str:
@@ -84,22 +81,6 @@ def _load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
     )
     print(f"  → {len(words)} words (cached → {cache.name})")
     return words
-
-
-def _estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    if model not in _PRICE_USD_PER_1M:
-        return 0.0
-    in_rate, out_rate = _PRICE_USD_PER_1M[model]
-    return (prompt_tokens / 1_000_000) * in_rate + (completion_tokens / 1_000_000) * out_rate
-
-
-def _extract_usage(raw: Any) -> tuple[int, int, int]:
-    """LangChain AIMessage에서 prompt/completion/total token 추출. 없으면 (0,0,0)."""
-    usage = getattr(raw, "usage_metadata", None) or {}
-    prompt = int(usage.get("input_tokens", 0))
-    completion = int(usage.get("output_tokens", 0))
-    total = int(usage.get("total_tokens", prompt + completion))
-    return prompt, completion, total
 
 
 async def _detect_with_meta(
@@ -135,7 +116,8 @@ async def _detect_with_meta(
         _ContentGapResponse,
         result["parsed"] if isinstance(result, dict) else result,
     )
-    prompt_tok, completion_tok, total_tok = _extract_usage(raw)
+    prompt_tok, completion_tok = extract_token_usage(raw)
+    total_tok = prompt_tok + completion_tok
     raw_text = ""
     if raw is not None:
         content = getattr(raw, "content", "")
@@ -224,7 +206,7 @@ def main() -> None:
 
     samples = result["samples"]
     events = result["events"]
-    cost_usd = _estimate_cost_usd(
+    cost_usd = estimate_cost_usd(
         args.model, result["prompt_tokens"], result["completion_tokens"]
     )
 

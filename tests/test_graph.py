@@ -7,6 +7,7 @@ from vidoctor.graph.state import (
     Category,
     Dimension,
 )
+from vidoctor.llm import LLMCallMetrics
 
 
 @pytest.fixture(autouse=True)
@@ -19,11 +20,11 @@ def _stub_heavy_nodes(monkeypatch):
     async def _empty_words(_path: str):
         return []
 
-    async def _empty_dead_zone(_path: str, _transcript, _category):
+    async def _empty_dead_zone(_path: str, _category):
         return []
 
     async def _empty_content_gap(_path: str, _transcript, _category):
-        return []
+        return [], LLMCallMetrics.empty(step="content_gap", model="gpt-4o")
 
     async def _empty_gaze(_path: str):
         return []

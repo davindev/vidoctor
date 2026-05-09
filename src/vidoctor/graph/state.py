@@ -1,7 +1,10 @@
 from collections.abc import Iterator
-from typing import Any, Literal, NotRequired, TypedDict, cast
+from operator import add
+from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel
+
+from vidoctor.llm import LLMCallMetrics
 
 Category = Literal["lecture", "vlog", "other"]
 Severity = Literal["low", "mid", "high"]
@@ -125,6 +128,10 @@ class AnalysisState(TypedDict):
     content_gaps: NotRequired[list[ContentGapEvent]]
 
     suggestions: NotRequired[list[Suggestion]]
+
+    # LLM 호출 비용·latency 누적. operator.add reducer로 여러 노드(content_gap·suggestions)
+    # 가 각자 list를 반환해도 LangGraph가 자동 concat. 영상당 총 비용은 합산해 산출.
+    step_metrics: NotRequired[Annotated[list[LLMCallMetrics], add]]
 
 
 def iter_dimension_events(

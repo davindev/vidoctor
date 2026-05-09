@@ -170,7 +170,7 @@ async def test_content_gap_returns_response_for_blank_lecture(tmp_path: Path):
     _make_lecture_video(video, duration_sec=60.0)
 
     transcript = [_w("이건", 1.0, 1.4), _w("강의입니다", 1.5, 2.5)]
-    events = await detect_content_gap_events(str(video), transcript, "lecture")
+    events, _metrics = await detect_content_gap_events(str(video), transcript, "lecture")
 
     # 빈 슬라이드 + 짧은 발화 → 정보 부족 issue 1개+ 반환 기대 (LLM 판단)
     # 결과 형식만 검증 (구체 결정은 LLM이라 결정적이지 않음)
