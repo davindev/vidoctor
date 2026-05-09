@@ -956,13 +956,41 @@ OCR 시도가 남긴 v1.1 lever 후보:
 - **LLM 비결정성**: temperature=0.0이지만 GPT-4o는 미세 변동 가능. 단일 run 결과라 변동성 미측정.
 - **MAX_SAMPLES=10·SAMPLE_INTERVAL_SEC=30s 휴리스틱**: 5~6분 영상까진 균등+컷 결합으로 cap에 안 걸리지만, 그 이상 영상에서는 cap이 핵심 시점을 누락할 위험. 짧게 표시되는 슬라이드도 이 sampling 정책의 구조적 FN.
 
+#### Stage 2 — ASR-anchored 시간 정밀도 보강
+
+UI에서 사용자 검증: `rubric_v3` 정착 후에도 detected가 `[80.7, 105.0]s`로 잡혀 라벨 `[94, 102]s`보다 시작점이 ~14초 앞섬. 사용자 지각상 "1분 20초"로 보여 라벨 시점과 직관 안 맞음.
+
+진단: **LLM은 시간 추론이 약하다** — frame image + ±15s transcript window로 "발화 시점"을 *공간적*으로 추정해야 해 슬라이드가 표시된 전체 구간을 잡는 경향. 라벨러는 미스매치 단어가 *실제 발화된* 짧은 구간을 라벨링해 시간 폭이 다름.
+
+**lever — 책임 분리** (LLM=의미 / ASR=시간):
+- `_ContentGapIssue.mismatch_keyword` 필드 신설 — LLM은 강사가 발화한 미스매치 핵심 단어/구를 description과 별도로 추출
+- `_anchor_to_asr` 후처리 — LLM detected 구간 ±5s 안에서 키워드를 ASR transcript에서 검색, 매칭된 word들의 `[min start, max end] + ±2s margin`으로 좁힘
+- 매칭 우선순위: 정확 substring → 3-gram → 2-gram. 한국어 ASR 오인식(WhisperX가 "반공변성"을 "반공병성"으로 받아씀 같은 케이스)을 흡수하면서 짧은 단어 false positive는 trigram 우선으로 차단
+- 매칭 실패 시 LLM 원본 fallback — silent degrade 안전장치
+
+결과 IoU 0.32 → **0.69** (라벨 [94, 102] vs anchored [92.6, 100.5]). 비용·latency 동일($0.021/4.3s) — LLM 호출 1회 변동 없음, 코드 후처리만 추가. UI에서 사용자 직관과 시점 일치.
+
+**도메인 일반화 검증**: rubric에 라벨 단어 페어("공변성/반공변성") 예시를 박았다가 사용자 지적으로 즉시 제거. 정의만 남긴 후에도 LLM이 영상 frame + transcript에서 직접 keyword를 추출해 동일 IoU 0.69 — 데이터 누설 의존이 아닌 진짜 일반화 검증. 다른 도메인(요리·악기·역사) 영상에선 그 영상의 단어가 그대로 추출될 것.
+
+| 시도 | F1 | IoU | 메커니즘 |
+|---|---|---|---|
+| baseline | 0.667 | 0.267 | "갑작스러운 등장" 표면 |
+| rubric_v3 | 1.000 | 0.329 | LLM이 슬라이드 표시 전체 구간 |
+| **anchor (정착)** | **1.000** | **0.690** | **LLM=의미 + ASR=시간 분리** |
+
 #### 정책 정착
 
 ```
-SAMPLE_INTERVAL_SEC=30 균등 + PySceneDetect 컷 → MAX_SAMPLES=10 cap (첫·끝 보존) →
-각 frame ±15s ASR (윈도우 외부 word 있으면 양 끝 "…" 마커) →
-GPT-4o multi-image + 미스매치-only rubric (negative 명시) +
-max_tokens=1024 / issues max_length=5 → structured output → IoU 0.2 매칭
+[검출] SAMPLE_INTERVAL_SEC=30 균등 + PySceneDetect 컷 → MAX_SAMPLES=10 cap →
+       각 frame ±15s ASR (윈도우 외부 "…" 마커) → GPT-4o multi-image →
+       _ContentGapResponse(issues=[{start, end, description, mismatch_keyword}], max_length=5)
+
+[후처리] 각 issue에 대해 _anchor_to_asr:
+       정규화(공백·따옴표 제거 + lower) → [start - 5s, end + 5s] 범위 transcript word →
+       (1) 정확 substring → (2) 3-gram → (3) 2-gram 매칭 → (min start, max end) ± 2s margin
+       매칭 실패 시 LLM 원본 fallback
+
+→ ContentGapEvent(start, end, description). IoU 0.2 매칭.
 ```
 
 ### Generate Suggestions — 5차원 finding 종합 LLM 노드
