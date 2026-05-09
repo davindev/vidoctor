@@ -10,7 +10,7 @@ detection 노드는 자기 차원만 책임진다 — detect_gaze / detect_conte
 - detect_dead_zone: Silero VAD 무발화 + Optical flow magnitude per-frame max
 - detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose
 - detect_content_gap: GPT-4o Vision multi-image batch + ASR
-- generate_suggestions: GPT-4o-mini로 finding 통합 → 개선 제안
+- generate_suggestions: GPT-4o-mini로 5차원 finding 통합 → 개선 제안 (suggestions.py)
 """
 
 import asyncio
@@ -80,5 +80,6 @@ async def detect_content_gap(state: AnalysisState) -> dict:
 
 
 async def generate_suggestions(state: AnalysisState) -> dict:
-    await asyncio.sleep(0.01)
-    return {"suggestions": []}
+    from vidoctor.suggestions import build_suggestions
+
+    return {"suggestions": await build_suggestions(state)}

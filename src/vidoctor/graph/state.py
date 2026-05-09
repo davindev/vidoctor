@@ -1,4 +1,5 @@
-from typing import Literal, NotRequired, TypedDict
+from collections.abc import Iterator
+from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel
 
@@ -55,6 +56,9 @@ class FillerEvent(BaseModel):
     text: str
     severity: Severity = "mid"
 
+    def summary(self) -> str:
+        return f"[{self.start:.1f}s] '{self.text}'"
+
 
 class CPSEvent(BaseModel):
     start: float
@@ -63,11 +67,17 @@ class CPSEvent(BaseModel):
     kind: Literal["too_fast", "too_slow"]
     severity: Severity = "mid"
 
+    def summary(self) -> str:
+        return f"[{self.start:.1f}–{self.end:.1f}s] {self.kind} (cps={self.cps:.2f})"
+
 
 class DeadZoneEvent(BaseModel):
     start: float
     end: float
     severity: Severity = "mid"
+
+    def summary(self) -> str:
+        return f"[{self.start:.1f}–{self.end:.1f}s] 무발화 {self.end - self.start:.1f}s"
 
 
 class GazeEvent(BaseModel):
@@ -76,12 +86,18 @@ class GazeEvent(BaseModel):
     direction: Direction
     severity: Severity = "mid"
 
+    def summary(self) -> str:
+        return f"[{self.start:.1f}–{self.end:.1f}s] 시선 이탈 {self.direction}"
+
 
 class ContentGapEvent(BaseModel):
     start: float
     end: float
     description: str
     severity: Severity = "mid"
+
+    def summary(self) -> str:
+        return f"[{self.start:.1f}–{self.end:.1f}s] {self.description}"
 
 
 class Suggestion(BaseModel):
@@ -109,3 +125,15 @@ class AnalysisState(TypedDict):
     content_gaps: NotRequired[list[ContentGapEvent]]
 
     suggestions: NotRequired[list[Suggestion]]
+
+
+def iter_dimension_events(
+    state: AnalysisState,
+) -> Iterator[tuple[Dimension, list[Any]]]:
+    """차원 → event 리스트를 순회. 비활성 차원은 빈 리스트로 yield.
+
+    TypedDict 동적 키 접근의 `# type: ignore[literal-required]`를 한 곳에 모은다.
+    """
+    for dim, field_name in DIM_TO_STATE_FIELD.items():
+        events = state.get(field_name, []) or []  # type: ignore[literal-required]
+        yield dim, list(events)
