@@ -43,6 +43,7 @@ from vidoctor.vision.content_gap import (  # noqa: E402
     SAMPLE_INTERVAL_SEC,
     SCENE_DEDUP_THRESHOLD_SEC,
     TRANSCRIPT_WINDOW_SEC,
+    _anchor_to_asr,
     _build_message,
     _ContentGapResponse,
     _sample_frames,
@@ -140,10 +141,11 @@ async def _detect_with_meta(
         content = getattr(raw, "content", "")
         raw_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
 
-    events = [
-        ContentGapEvent(start=i.start_sec, end=i.end_sec, description=i.description)
-        for i in parsed.issues
-    ]
+    events: list[ContentGapEvent] = []
+    for issue in parsed.issues:
+        anchored = _anchor_to_asr(issue, transcript)
+        s, e = anchored if anchored is not None else (issue.start_sec, issue.end_sec)
+        events.append(ContentGapEvent(start=s, end=e, description=issue.description))
     return {
         "samples": samples,
         "events": events,
