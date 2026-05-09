@@ -3,7 +3,8 @@
 graph 결과를 영구 저장해 UI에서 '이전 분석 다시 보기' 가능. service_role key로
 단일 사용자 가정 (RLS 비활성, v1.1에서 인증 도입 시 정책 추가).
 
-영상 파일은 R2(S3 호환, single-file 5TB·egress 무료)에 저장하고, 메타·findings는 Supabase Postgres에 저장.
+영상 파일은 R2(S3 호환, single-file 5TB·egress 무료)에, 메타·findings·suggestions는
+Supabase Postgres에 저장한다.
 
 5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 갖지만 findings
 테이블은 (start_sec/end_sec/severity/payload JSONB) 통합 스키마. 차원별 고유 필드는
@@ -34,6 +35,7 @@ from vidoctor.graph.state import (
     Dimension,
     FillerEvent,
     GazeEvent,
+    Suggestion,
 )
 
 _log = logging.getLogger(__name__)
@@ -211,6 +213,22 @@ def save_findings(analysis_id: str, state: AnalysisState) -> None:
         _client().table("findings").insert(rows).execute()
 
 
+def save_suggestions(analysis_id: str, suggestions: list[Suggestion]) -> None:
+    """suggestions를 bulk insert. finding_refs는 'filler:0' 같은 dim:idx 식별자."""
+    if not suggestions:
+        return
+    rows = [
+        {
+            "analysis_id": analysis_id,
+            "text": s.text,
+            "priority": s.priority,
+            "finding_refs": s.finding_refs,
+        }
+        for s in suggestions
+    ]
+    _client().table("suggestions").insert(rows).execute()
+
+
 # ---------------------------------------------------------------------------
 # 종료 처리 — 호출자가 success/fail 두 경로만 신경 쓰면 되도록 묶음
 # ---------------------------------------------------------------------------
@@ -224,8 +242,9 @@ def complete_analysis(
     cost_usd: float | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """성공 종료: findings 저장 + analyses.finished_at + videos.status='completed'."""
+    """성공 종료: findings·suggestions 저장 + analyses.finished_at + videos.status='completed'."""
     save_findings(analysis_id, state)
+    save_suggestions(analysis_id, state.get("suggestions", []) or [])
     finalize_analysis(analysis_id, cost_usd=cost_usd, metadata=metadata)
     update_video_status(video_id, "completed")
 
@@ -272,6 +291,26 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
         if dim in grouped:
             grouped[dim].append(_row_to_event(row))
     return grouped
+
+
+def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
+    """suggestions를 priority 오름차순(0=가장 높음 우선)으로 반환."""
+    res = (
+        _client()
+        .table("suggestions")
+        .select("text, priority, finding_refs")
+        .eq("analysis_id", analysis_id)
+        .order("priority")
+        .execute()
+    )
+    return [
+        Suggestion(
+            text=row["text"],
+            priority=row["priority"],
+            finding_refs=row.get("finding_refs") or [],
+        )
+        for row in _row_data(res)
+    ]
 
 
 def get_analysis_storage_path(analysis_id: str) -> str | None:
