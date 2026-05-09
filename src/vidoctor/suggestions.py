@@ -17,6 +17,8 @@ from vidoctor.graph.state import (
     AnalysisState,
     Dimension,
     Suggestion,
+    Word,
+    format_finding_ref,
     iter_dimension_events,
 )
 from vidoctor.llm import get_chat_model
@@ -27,23 +29,46 @@ MAX_SUGGESTIONS = 8
 # finding이 폭증해도 LLM은 패턴만 인식하면 되므로 상위 N건이면 충분.
 MAX_FINDINGS_PER_DIM = 30
 
-_RUBRIC = """당신은 영상 감수 전문가입니다. 아래 영상의 5차원 분석 결과를 검토하고, \
-시청자 경험 개선을 위한 구체적·실행 가능한 제안을 작성하세요.
+# transcript 전체를 LLM에 그대로 넘겨 영상 주제·맥락을 인식시킨다. 5분 영상 한국어
+# 기준 ~6K char(약 8K token). 그 이상은 머리·꼬리만 남기고 중간 생략 — 영상 도입부와
+# 마무리에 주제 신호가 가장 강하다는 가정.
+TRANSCRIPT_CHAR_CAP = 12000
 
-각 차원이 가리키는 신호:
-- filler: 군더더기 어휘로 전달력·자신감 약화
-- cps: 발화 속도 이상(너무 빠름/느림) — 청취 부담
-- dead_zone: 무발화·정적 화면이 길어 시청자 이탈 위험
-- gaze: 화자 응시 안정성 (시선 이탈)
-- content_gap: 화면 시각 정보와 발화 정보의 불일치
+# transcript를 30초 단위 chunk로 묶어 [Ns~] 헤딩을 박음. finding 시점과 매칭이 쉬워지고
+# LLM이 "어느 구간이 어떤 주제였는지" 추론 가능.
+TRANSCRIPT_CHUNK_SEC = 30.0
+
+_RUBRIC = """당신은 영상 감수 전문가입니다. 아래 영상의 음성 전사(transcript)와 \
+5차원 분석 finding을 함께 검토하고, 시청자 경험 개선을 위한 구체적·실행 가능한 \
+제안을 작성하세요.
+
+각 차원의 신호와 그에 맞는 행동 영역 (다른 차원의 행동을 권하지 말 것):
+- filler: 군더더기 어휘 → 다음 녹화에서 의식적 줄이기 / 편집으로 컷 / 호흡 정리
+- cps too_fast: 발화 속도 너무 빠름 → 호흡 추가 / 문장 단위 끊기 / 핵심에서 속도 늦추기
+- cps too_slow: 발화 속도 너무 느림 → 군더더기 제거 / 문장 압축 / 주제 전개 가속화
+  (cps 신호로 콘텐츠 추가·예시 보강 같은 콘텐츠 행동을 권하지 말 것 — 그것은 \
+content_gap·dead_zone의 영역)
+- dead_zone: 무발화·정적 화면 → 추가 설명·예시 삽입 / 시각 자료 추가 / 컷 편집
+- gaze: 화자 응시 깨짐 → 카메라 위치 조정 / 시선 처리 연습 / 프레임 안정화
+- content_gap: 화면 시각 ↔ 발화 불일치 → 슬라이드 수정 / 발화 수정 / 별도 자료 보강·도식 추가
 
 작성 원칙:
-- 제안은 한국어 한 문장. 행동 지시형으로 (예: "X를 정리하세요").
+- **finding_refs에 적은 finding 신호의 본질을 그 제안이 직접 다루어야 한다.** \
+transcript는 톤·예시·시점 표현에만 활용하고, finding과 무관한 콘텐츠 개선 제안은 \
+만들지 말 것 (예: cps finding 근거로 "예시를 추가하세요" 같은 콘텐츠 보강 제안 금지).
+- transcript에서 영상 주제·핵심 개념을 파악해 제안 본문에 영상 내용 맥락을 반영하라 \
+(예: "공변성 개념을 설명하는 [80–105s] 구간의 발화 속도를 늦춰 핵심 단어가 들리도록 \
+호흡을 둬라"). 일반론은 피한다.
 - 같은 차원·근접 시간대 finding은 묶어 한 제안으로 요약하라. \
 finding 1건마다 제안 1건씩 나누지 말 것.
-- 각 제안의 finding_refs에 근거 finding의 ref(예: "filler:0", "cps:2")를 적어라.
+- 단, **cps는 kind별로 분리**해 묶어라 — too_fast finding들은 한 제안으로, \
+too_slow finding들은 또 다른 제안으로. 두 kind는 행동(호흡·끊기 vs 압축·가속화)이 \
+정반대라 한 제안에 섞으면 안 된다.
+- 각 제안의 finding_refs에 근거 finding의 ref(예: "filler:0", "cps:2")를 적어라. \
+**본문(text)에는 시간 표기를 넣지 말 것** — 시간은 UI가 finding_refs 버튼으로 \
+별도 표시한다. 본문에 "[58s~]" "[00:01:12]" "47초 부근" 같은 시간 명시 금지.
 - priority: 0이 가장 높음. 빈도·구간 길이·시청자 영향 기반으로 결정.
-- 영상 도메인(강의·브이로그·기타)은 finding 패턴에서 추정해 톤을 조정하라. \
+- 영상 도메인(강의·브이로그·기타)은 transcript와 finding 패턴에서 추정해 톤을 조정하라. \
 카테고리 가정 없이도 구체적 제안이 가능해야 한다.
 - 미스매치·문제가 거의 없으면 빈 리스트.
 """
@@ -64,8 +89,11 @@ class _CollectedFindings:
 
 class _SuggestionItem(BaseModel):
     text: str = Field(
-        description="제안 본문, 한국어 한 문장 행동 지시형",
-        max_length=200,
+        description=(
+            "제안 본문, 한국어 1~2문장 행동 지시형. 영상 주제·구간 내용을 반영해 "
+            "구체적으로."
+        ),
+        max_length=400,
     )
     priority: int = Field(description="우선순위 (0=가장 높음)", ge=0)
     finding_refs: list[str] = Field(
@@ -80,6 +108,32 @@ class _SuggestionResponse(BaseModel):
     )
 
 
+def _format_transcript(transcript: list[Word]) -> str:
+    """transcript를 30초 단위 chunk로 묶어 시점 헤딩이 박힌 텍스트로.
+
+    cap 초과 시 머리·꼬리만 보존하고 중간을 생략 — 도입부·마무리에 영상 주제 신호가
+    가장 강하다는 가정. finding은 별도 ref·시점으로 LLM에 전달되므로 중간 누락 정보는
+    finding 메타로 메꿔진다.
+    """
+    if not transcript:
+        return ""
+    chunks: dict[int, list[str]] = {}
+    for w in transcript:
+        bucket = int(w.start // TRANSCRIPT_CHUNK_SEC) * int(TRANSCRIPT_CHUNK_SEC)
+        chunks.setdefault(bucket, []).append(w.text)
+    blocks = [f"[{start}s~] {' '.join(words)}" for start, words in sorted(chunks.items())]
+    text = "\n".join(blocks)
+    if len(text) <= TRANSCRIPT_CHAR_CAP:
+        return text
+    half = TRANSCRIPT_CHAR_CAP // 2 - 30
+    # chunk 경계(\n)에서 잘라 발화 중간 단절을 피한다.
+    head_cut = text.rfind("\n", 0, half)
+    head = text[: head_cut if head_cut > 0 else half]
+    tail_cut = text.find("\n", len(text) - half)
+    tail = text[tail_cut + 1 if tail_cut > 0 else -half :]
+    return head + "\n... (중간 생략) ...\n" + tail
+
+
 def _collect_findings(state: AnalysisState) -> _CollectedFindings:
     """state의 모든 차원 event를 _Finding 리스트로. 차원당 MAX_FINDINGS_PER_DIM cap."""
     findings: list[_Finding] = []
@@ -90,7 +144,7 @@ def _collect_findings(state: AnalysisState) -> _CollectedFindings:
         capped = events[:MAX_FINDINGS_PER_DIM]
         for i, e in enumerate(capped):
             findings.append(
-                _Finding(ref=f"{dim}:{i}", dimension=dim, summary=e.summary())
+                _Finding(ref=format_finding_ref(dim, i), dimension=dim, summary=e.summary())
             )
         if len(events) > MAX_FINDINGS_PER_DIM:
             extras[dim] = len(events) - MAX_FINDINGS_PER_DIM
@@ -100,11 +154,18 @@ def _collect_findings(state: AnalysisState) -> _CollectedFindings:
 def _build_message(collected: _CollectedFindings, state: AnalysisState) -> HumanMessage:
     category = state["category"]
     active = ", ".join(CATEGORY_DIMENSIONS[category])
+    transcript_text = _format_transcript(state.get("transcript", []) or [])
+
     blocks: list[str] = [
         _RUBRIC,
         f"영상 카테고리(참고용): {category}",
         f"활성 차원: {active}",
     ]
+    if transcript_text:
+        blocks.append("음성 전사 (시점 헤딩 박힘):\n" + transcript_text)
+    else:
+        blocks.append("음성 전사 없음 — finding만으로 제안 작성.")
+
     if not collected.findings:
         blocks.append("발견된 finding 없음.")
     else:
@@ -114,8 +175,9 @@ def _build_message(collected: _CollectedFindings, state: AnalysisState) -> Human
         for dim, more in collected.extras.items():
             blocks.append(f"- ({dim} 차원 추가 {more}건 생략)")
     blocks.append(
-        f"위 finding을 근거로 개선 제안을 최대 {MAX_SUGGESTIONS}건 작성하라. "
-        "근거가 약하거나 신호가 미미하면 제안하지 말 것."
+        f"transcript에서 영상 주제·핵심 내용을 먼저 파악한 뒤, finding을 근거로 "
+        f"개선 제안을 최대 {MAX_SUGGESTIONS}건 작성하라. 근거가 약하거나 신호가 "
+        "미미하면 제안하지 말 것."
     )
     return HumanMessage(content="\n".join(blocks))
 
@@ -131,9 +193,9 @@ async def build_suggestions(state: AnalysisState) -> list[Suggestion]:
         return []
 
     message = _build_message(collected, state)
-    # max_tokens=512: 8건 × ~한 문장 + finding_refs JSON으로 충분.
+    # max_tokens=1024: 8 suggestion × 1~2문장(~120 token) + finding_refs JSON 여유.
     # temperature=0.3: 같은 finding에 매번 동일 표현만 나오지 않게 약간의 변동 허용.
-    model = get_chat_model(model="gpt-4o-mini", temperature=0.3, max_tokens=512)
+    model = get_chat_model(model="gpt-4o-mini", temperature=0.3, max_tokens=1024)
     structured = model.with_structured_output(_SuggestionResponse)
     response = cast(_SuggestionResponse, await structured.ainvoke([message]))
 

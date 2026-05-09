@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel
 
@@ -137,3 +137,19 @@ def iter_dimension_events(
     for dim, field_name in DIM_TO_STATE_FIELD.items():
         events = state.get(field_name, []) or []  # type: ignore[literal-required]
         yield dim, list(events)
+
+
+# Suggestion.finding_refs의 ref 식별자 형식 — Suggestion이 LLM·DB·UI 경계를 넘나들 때
+# 이 한 쌍의 함수가 직렬화/역직렬화 책임을 단독으로 진다. 형식 변경 시 여기만 수정.
+def format_finding_ref(dimension: Dimension, idx: int) -> str:
+    return f"{dimension}:{idx}"
+
+
+def parse_finding_ref(ref: str) -> tuple[Dimension, int] | None:
+    """ref → (dimension, idx). 형식이 깨졌거나 dimension이 알 수 없으면 None."""
+    if ":" not in ref:
+        return None
+    dim_str, idx_str = ref.split(":", 1)
+    if not idx_str.isdigit() or dim_str not in DIM_TO_STATE_FIELD:
+        return None
+    return cast(Dimension, dim_str), int(idx_str)
