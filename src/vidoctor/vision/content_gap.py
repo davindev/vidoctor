@@ -1,20 +1,16 @@
 """내용 공백 검출 — GPT-4o Vision multi-image batch + 카테고리 rubric.
 
 브이로그는 비활성 (일상 기록·감정 공유 영상에 "설명 충분성" 평가 부적합).
-강의는 "주제 추정 가능?" rubric, 기타는 "자체 의미 전달?" rubric.
+강의는 "슬라이드 vs 발화 미스매치", 기타는 "자체 의미 전달 가능성" rubric.
 
 알고리즘:
 1. 영상에서 SAMPLE_INTERVAL_SEC(30s) 균등 + PySceneDetect 컷 경계 결합 프레임 시각 추출
 2. dedup (인접 시각 5s 이내는 하나만) + MAX_SAMPLES 캡으로 비용 통제
 3. 각 프레임을 720p 다운스케일 + JPEG 인코딩 + base64
-4. 각 프레임 시각 ± WINDOW_SEC(15s) transcript 추출
+4. 각 프레임 시각 ± WINDOW_SEC(15s) transcript 추출, 윈도우 외부에 단어 있으면 양 끝
+   "…" 마커 부착 → rubric에서 "…는 끊김 아님" 안내. ASR 분할이 만드는 가짜 누락 신호 차단.
 5. 프레임·transcript·rubric을 한 multi-image 메시지로 묶어 GPT-4o Vision 호출
 6. Pydantic structured output(_ContentGapResponse)으로 파싱 → ContentGapEvent
-
-상수는 휴리스틱 시작값. 골든셋 라벨링 후 우선 튜닝:
-  1순위: SAMPLE_INTERVAL_SEC / MAX_SAMPLES — 영상 길이·비용 대비 recall
-  2순위: 카테고리별 rubric 본문 — Cohen's κ ≥ 0.6 달성까지 프롬프트 엔지니어링
-  3순위: SCENE_DEDUP_THRESHOLD_SEC — 컷 ↔ 균등 샘플 충돌 처리
 """
 
 from __future__ import annotations
@@ -43,15 +39,19 @@ SCENE_DEDUP_THRESHOLD_SEC = 5.0
 # 3분 영상 균등 6장 + 컷 4~6개 + 캡 → 보통 8~10장.
 MAX_SAMPLES = 10
 
-_LECTURE_RUBRIC = """당신은 강의 영상 감수 전문가입니다. 아래 강의의 여러 시점 프레임과 \
-해당 구간의 음성 전사를 검토하고, **시청자가 주제를 따라가기 어렵거나 정보가 부족한 \
-구간**을 찾아내세요.
 
-판정 기준:
-- 슬라이드/화면만 봐도 무엇에 관한 강의인지 추정 가능한가
-- 음성과 화면 내용이 일관성 있게 연결되는가
-- 갑작스러운 비약이나 누락된 설명은 없는가
-- 같은 내용의 무의미한 반복은 없는가
+_LECTURE_RUBRIC = """당신은 강의 영상 감수 전문가입니다. 아래 강의의 여러 시점 프레임과 \
+해당 구간의 음성 전사를 검토하고, **슬라이드 화면이 가리키는 개념·정보와 강사 발화 \
+내용이 어긋나는 구간**을 찾아내세요.
+
+미스매치 판정 기준:
+- 슬라이드 텍스트·도식이 표시한 용어·개념과 강사가 발화한 단어·정의가 다른 경우
+- 슬라이드 항목과 발화 주제가 서로 다른 대상을 가리키는 경우
+
+다음 신호는 미스매치가 아니므로 검출하지 마세요:
+- 발화가 매끄럽지 않거나 짧은 추임새·반복이 있음
+- 음성 전사가 윈도우 경계("…" 표기)에서 잘려 보이는 것 — 실제 발화는 인접 구간으로 연속
+- 슬라이드와 발화가 같은 주제를 다루며 단지 표현·예시가 다른 경우
 """
 
 _OTHER_RUBRIC = """당신은 영상 감수 전문가입니다. 아래 영상의 여러 시점 프레임과 음성 \
@@ -61,6 +61,9 @@ _OTHER_RUBRIC = """당신은 영상 감수 전문가입니다. 아래 영상의 
 판정 기준:
 - 무엇을 보여주는지·무엇을 말하는지 파악 가능한가
 - 누락된 정보로 인해 의미가 통하지 않는 구간이 있는가
+
+음성 전사가 윈도우 경계("…" 표기)에서 잘려 보이는 것은 끊김이 아니라 인접 구간으로
+연속되는 발화이며, 이를 미스매치로 검출하지 마세요.
 """
 
 # vlog는 의도적으로 미등록. 그래프가 vlog에서 이 노드를 호출하지 않으며, 위반 시
@@ -79,25 +82,38 @@ class _FrameSample:
 
 
 class _ContentGapIssue(BaseModel):
-    """LLM 응답 단일 항목."""
-
     start_sec: float = Field(description="문제 구간 시작 시각 (초)")
     end_sec: float = Field(description="문제 구간 끝 시각 (초)")
-    description: str = Field(description="이 구간의 문제점을 한 문장 한국어로 설명")
+    description: str = Field(
+        description="이 구간의 미스매치 내용을 한 문장 한국어로 설명",
+        max_length=200,
+    )
 
 
+# issues max_length로 출력 길이 폭발 차단. 모델이 종료 신호 없이 issue를 무한 생성해
+# completion_tokens=16384에 닿아 structured output 파싱이 실패하는 케이스를 막는다.
 class _ContentGapResponse(BaseModel):
-    """LLM이 반환할 전체 응답 스키마."""
-
-    issues: list[_ContentGapIssue] = Field(default_factory=list)
+    issues: list[_ContentGapIssue] = Field(default_factory=list, max_length=5)
 
 
 def _transcript_around(transcript: list[Word], time_sec: float) -> str:
-    """time_sec ± TRANSCRIPT_WINDOW_SEC 범위의 단어들을 텍스트로 결합."""
+    """time_sec ± TRANSCRIPT_WINDOW_SEC 범위의 단어들을 텍스트로 결합.
+
+    윈도우 경계 바깥에 word가 있으면 양 끝에 "…" 마커를 붙여 ASR 분할이 만드는 가짜
+    누락 신호를 차단한다 — 마커가 없으면 LLM이 윈도우 분할을 "설명 누락"으로 오해해
+    hallucinated FP를 발생시킨다.
+    """
     lo = time_sec - TRANSCRIPT_WINDOW_SEC
     hi = time_sec + TRANSCRIPT_WINDOW_SEC
-    in_window = [w.text for w in transcript if lo <= w.start <= hi]
-    return " ".join(in_window).strip()
+    in_window = [w for w in transcript if lo <= w.start <= hi]
+    if not in_window:
+        return ""
+    text = " ".join(w.text for w in in_window).strip()
+    if any(w.start < lo for w in transcript):
+        text = "… " + text
+    if any(w.start > hi for w in transcript):
+        text = text + " …"
+    return text
 
 
 def _encode_frame_jpeg(frame) -> str:
@@ -115,8 +131,7 @@ def _encode_frame_jpeg(frame) -> str:
 def _detect_scene_cuts(video_path: str) -> list[float]:
     """PySceneDetect로 영상 컷 경계 시각 리스트 추출.
 
-    각 씬의 시작 시각을 반환 (첫 씬의 0초는 제외).
-    frame_skip=2로 디코딩 비용 절반 (3분 영상 ~3s → ~1.5s).
+    각 씬의 시작 시각을 반환 (첫 씬의 0초는 제외). frame_skip=2로 디코딩 비용 절반.
     검출 실패 시 빈 리스트 (검출은 옵션, 균등 샘플링은 항상 동작).
     """
     try:
@@ -148,18 +163,13 @@ def _merge_sample_times(
     Cap 적용 시 첫·끝 시각 강제 보존(timeline 양 끝 정보 손실 방지).
     """
     selected: list[float] = sorted(set(cuts))
-
     for t in sorted(set(uniform)):
         if all(abs(t - s) >= SCENE_DEDUP_THRESHOLD_SEC for s in selected):
             selected.append(t)
-
     selected.sort()
-
     if len(selected) > max_samples:
-        # i=0 → 첫 원소, i=max_samples-1 → 마지막 원소 보장
         step = (len(selected) - 1) / (max_samples - 1)
         selected = [selected[round(i * step)] for i in range(max_samples)]
-
     return selected
 
 
@@ -174,18 +184,15 @@ def _sample_frames(
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-
     try:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps
-
         sample_times = _merge_sample_times(
             uniform=_uniform_times(duration),
             cuts=_detect_scene_cuts(video_path),
             max_samples=MAX_SAMPLES,
         )
-
         samples: list[_FrameSample] = []
         for t in sample_times:
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
@@ -200,7 +207,6 @@ def _sample_frames(
                     transcript_text=_transcript_around(transcript, actual_t),
                 )
             )
-
         return samples
     finally:
         cap.release()
@@ -227,8 +233,11 @@ def _build_message(samples: list[_FrameSample], rubric: str) -> HumanMessage:
     content.append(
         {
             "type": "text",
-            "text": "위 프레임들에서 발견된 문제 구간을 issues 필드에 JSON으로 답하라. "
-            "문제가 없으면 빈 리스트.",
+            "text": (
+                "위 프레임들에서 발견된 미스매치 구간을 issues 필드에 JSON으로 답하라. "
+                "미스매치가 명확한 것만 최대 5건, 각 description은 한 문장. "
+                "미스매치가 없으면 빈 리스트."
+            ),
         }
     )
     return HumanMessage(content=content)
@@ -246,13 +255,13 @@ async def detect_content_gap_events(
     samples = _sample_frames(video_path, transcript)
     if not samples:
         return []
-
     message = _build_message(samples, _RUBRICS[category])
 
-    model = get_chat_model(model="gpt-4o", temperature=0.0)
+    # max_tokens=1024: issues 5건 × ~200자로 충분. structured output length limit
+    # 도달로 인한 파싱 실패 차단.
+    model = get_chat_model(model="gpt-4o", temperature=0.0, max_tokens=1024)
     structured = model.with_structured_output(_ContentGapResponse)
     response = cast(_ContentGapResponse, await structured.ainvoke([message]))
-
     return [
         ContentGapEvent(
             start=issue.start_sec,
