@@ -331,11 +331,11 @@ def test_load_labels_real_lecture_csv_if_exists():
 def test_load_labels_synthetic_csv(tmp_path: Path):
     csv_path = tmp_path / "labels.csv"
     csv_path.write_text(
-        "start,end,dimension,severity,kind,note\n"
-        "1.0,2.0,filler,mid,,음\n"
-        "10.0,15.0,cps,high,too_fast,속사포\n"
-        ",,,,,\n"  # 빈 행 — skip
-        "20.0,40.0,dead_zone,mid,,\n",
+        "start,end,dimension,kind,note\n"
+        "1.0,2.0,filler,,음\n"
+        "10.0,15.0,cps,too_fast,속사포\n"
+        ",,,,\n"  # 빈 행 — skip
+        "20.0,40.0,dead_zone,,\n",
         encoding="utf-8",
     )
     labels = load_labels(csv_path)

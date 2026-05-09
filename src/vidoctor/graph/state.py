@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from vidoctor.llm import LLMCallMetrics
 
 Category = Literal["lecture", "vlog", "other"]
-Severity = Literal["low", "mid", "high"]
 Dimension = Literal["filler", "cps", "dead_zone", "gaze", "content_gap"]
 Direction = Literal[
     "front",
@@ -51,13 +50,10 @@ class Word(BaseModel):
     score: float | None = None
 
 
-# severity는 모든 차원에서 default "mid"로 통일. detector별 임계 결정 근거(라벨링·평가
-# 시스템)가 갖춰지기 전엔 분기가 노이즈만 만들어 평가 정확도 저해. 로드맵은 README 참조.
 class FillerEvent(BaseModel):
     start: float
     end: float
     text: str
-    severity: Severity = "mid"
 
     def summary(self) -> str:
         return f"[{self.start:.1f}s] '{self.text}'"
@@ -68,7 +64,6 @@ class CPSEvent(BaseModel):
     end: float
     cps: float
     kind: Literal["too_fast", "too_slow"]
-    severity: Severity = "mid"
 
     def summary(self) -> str:
         return f"[{self.start:.1f}–{self.end:.1f}s] {self.kind} (cps={self.cps:.2f})"
@@ -77,7 +72,6 @@ class CPSEvent(BaseModel):
 class DeadZoneEvent(BaseModel):
     start: float
     end: float
-    severity: Severity = "mid"
 
     def summary(self) -> str:
         return f"[{self.start:.1f}–{self.end:.1f}s] 무발화 {self.end - self.start:.1f}s"
@@ -87,7 +81,6 @@ class GazeEvent(BaseModel):
     start: float
     end: float
     direction: Direction
-    severity: Severity = "mid"
 
     def summary(self) -> str:
         return f"[{self.start:.1f}–{self.end:.1f}s] 시선 이탈 {self.direction}"
@@ -97,7 +90,6 @@ class ContentGapEvent(BaseModel):
     start: float
     end: float
     description: str
-    severity: Severity = "mid"
 
     def summary(self) -> str:
         return f"[{self.start:.1f}–{self.end:.1f}s] {self.description}"
@@ -105,7 +97,6 @@ class ContentGapEvent(BaseModel):
 
 class Suggestion(BaseModel):
     text: str
-    priority: int = 0
     finding_refs: list[str] = []
 
 

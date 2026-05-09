@@ -176,7 +176,6 @@ async def test_content_gap_returns_response_for_blank_lecture(tmp_path: Path):
     # 결과 형식만 검증 (구체 결정은 LLM이라 결정적이지 않음)
     for ev in events:
         assert ev.end >= ev.start
-        assert ev.severity in ("low", "mid", "high")
         assert ev.description
 
 

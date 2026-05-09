@@ -10,8 +10,7 @@
 - 사전에 없는 단어의 반복은 무시 — 강조/명령("짜잔 짜잔", "강아지 강아지")이
   머뭇거림보다 우세해 disfluency repetition 가정이 데이터에서 깨짐(vlog 검증)
 
-severity는 default(mid). 임계 결정 근거(라벨링·평가)가 없는 상태에선 분기가 노이즈만
-만든다. 로드맵(self-correction / backchannel / severity 차등)은 README 참조.
+self-correction / backchannel 차원 확장 로드맵은 README 참조.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ import re
 from vidoctor.graph.state import FillerEvent, Word
 
 # 한국어 구어에서 자주 보고되는 filled pause 어휘. 명확형(어/음/...)과 모호형(이제/막/...)을
-# 단일 사전으로 묶었다. 어휘 차등(severity 분기)은 평가 기준이 갖춰진 뒤 다시 분리 — 그때까진
-# git history에 출처가 보존되니 미래 분기를 위해 자료구조를 분리해 둘 필요 없다.
+# 단일 사전으로 묶었다. 어휘 차등은 평가 기준이 갖춰진 뒤 다시 분리 — 그때까진 git history에
+# 출처가 보존되니 미래 분기를 위해 자료구조를 분리해 둘 필요 없다.
 #
 # "그러니까/그래서"는 의도적으로 미포함: 강의에서 논리 연결사로 정상 사용되는 비율이 높아
 # false positive 다수. "자"는 주의 환기 표지("자, 이제…")로 한국어 구어에서 자주 쓰여 포함.

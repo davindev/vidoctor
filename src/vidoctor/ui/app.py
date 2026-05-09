@@ -87,7 +87,7 @@ _GAZE_DIRECTION_LABEL: dict[str, str] = {
     "right_down": "왼쪽 아래",
 }
 
-# 5차원 finding 이벤트의 union — start/end/severity property 직접 접근을 타입 안전하게.
+# 5차원 finding 이벤트의 union — start/end property 직접 접근을 타입 안전하게.
 _FindingEvent = FillerEvent | CPSEvent | DeadZoneEvent | GazeEvent | ContentGapEvent
 
 
@@ -163,7 +163,7 @@ def _event_button_label(dim: str, ev: _FindingEvent) -> str:
             else text[: _LABEL_EXTRA_MAX_LEN - 1] + "…"
         )
     suffix = f" · {' '.join(extras)}" if extras else ""
-    return f"{_fmt_time(ev.start)}–{_fmt_time(ev.end)} · {ev.severity}{suffix}"
+    return f"{_fmt_time(ev.start)}–{_fmt_time(ev.end)}{suffix}"
 
 
 def _jump_key(analysis_id: str) -> str:
@@ -199,7 +199,7 @@ def _cached_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
 
 @st.cache_data(ttl=300)
 def _cached_suggestions(analysis_id: str) -> list[Suggestion]:
-    """suggestions도 분석 완료 후 immutable. priority 오름차순 정렬된 상태로 옴."""
+    """suggestions도 분석 완료 후 immutable. LLM이 출력한 순서를 유지해 표시."""
     return get_analysis_suggestions(analysis_id)
 
 
@@ -316,9 +316,7 @@ def _render_suggestions(analysis_id: str) -> None:
     findings = _cached_findings(analysis_id)
     for sug_idx, sug in enumerate(suggestions):
         with st.container(border=True):
-            cols = st.columns([10, 1])
-            cols[0].markdown(f"**{sug.text}**")
-            cols[1].caption(f"P{sug.priority}")
+            st.markdown(f"**{sug.text}**")
             if sug.finding_refs:
                 st.caption("근거 — 클릭하면 영상이 해당 구간으로 이동")
                 for chunk_start in range(0, len(sug.finding_refs), _REF_BUTTONS_PER_ROW):

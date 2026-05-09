@@ -7,8 +7,8 @@ graph 결과를 영구 저장해 UI에서 '이전 분석 다시 보기' 가능. 
 Supabase Postgres에 저장한다.
 
 5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 갖지만 findings
-테이블은 (start_sec/end_sec/severity/payload JSONB) 통합 스키마. 차원별 고유 필드는
-payload JSONB로 직렬화·역직렬화한다.
+테이블은 (start_sec/end_sec/payload JSONB) 통합 스키마. 차원별 고유 필드는 payload
+JSONB로 직렬화·역직렬화한다.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def _first_row(res: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-_FINDING_TOP_FIELDS: frozenset[str] = frozenset({"start", "end", "severity"})
+_FINDING_TOP_FIELDS: frozenset[str] = frozenset({"start", "end"})
 
 
 def _event_to_row(analysis_id: str, dim: str, event: BaseModel) -> dict[str, Any]:
@@ -109,7 +109,6 @@ def _event_to_row(analysis_id: str, dim: str, event: BaseModel) -> dict[str, Any
         "dimension": dim,
         "start_sec": data["start"],
         "end_sec": data["end"],
-        "severity": data.get("severity"),
         "payload": payload,
     }
 
@@ -121,9 +120,6 @@ def _row_to_event(row: dict[str, Any]) -> BaseModel:
         "end": row["end_sec"],
         **(row.get("payload") or {}),
     }
-    # severity는 DB nullable. None이면 이벤트 클래스의 기본값 사용.
-    if row.get("severity") is not None:
-        kwargs["severity"] = row["severity"]
     return cls(**kwargs)
 
 
@@ -221,7 +217,6 @@ def save_suggestions(analysis_id: str, suggestions: list[Suggestion]) -> None:
         {
             "analysis_id": analysis_id,
             "text": s.text,
-            "priority": s.priority,
             "finding_refs": s.finding_refs,
         }
         for s in suggestions
@@ -336,19 +331,18 @@ def get_analysis_meta(analysis_id: str) -> dict[str, Any]:
 
 
 def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
-    """suggestions를 priority 오름차순(0=가장 높음 우선)으로 반환."""
+    """suggestions를 저장 순서대로 반환 — LLM 출력 순서를 그대로 보존."""
     res = (
         _client()
         .table("suggestions")
-        .select("text, priority, finding_refs")
+        .select("text, finding_refs")
         .eq("analysis_id", analysis_id)
-        .order("priority")
+        .order("id")
         .execute()
     )
     return [
         Suggestion(
             text=row["text"],
-            priority=row["priority"],
             finding_refs=row.get("finding_refs") or [],
         )
         for row in _row_data(res)

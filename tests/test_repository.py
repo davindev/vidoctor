@@ -28,37 +28,35 @@ from vidoctor.repository import (
 
 
 def test_event_to_row_filler_payload_keeps_text():
-    ev = FillerEvent(start=1.0, end=1.5, text="음", severity="low")
+    ev = FillerEvent(start=1.0, end=1.5, text="음")
     row = _event_to_row("aid-1", "filler", ev)
     assert row["analysis_id"] == "aid-1"
     assert row["dimension"] == "filler"
     assert row["start_sec"] == 1.0
     assert row["end_sec"] == 1.5
-    assert row["severity"] == "low"
     assert row["payload"] == {"text": "음"}
 
 
 def test_event_to_row_cps_payload_keeps_kind_and_value():
-    ev = CPSEvent(start=2.0, end=12.0, cps=11.25, kind="too_fast", severity="high")
+    ev = CPSEvent(start=2.0, end=12.0, cps=11.25, kind="too_fast")
     row = _event_to_row("aid", "cps", ev)
     assert row["payload"] == {"cps": 11.25, "kind": "too_fast"}
-    assert row["severity"] == "high"
 
 
 def test_event_to_row_dead_zone_payload_empty():
-    ev = DeadZoneEvent(start=10.0, end=42.0, severity="high")
+    ev = DeadZoneEvent(start=10.0, end=42.0)
     row = _event_to_row("aid", "dead_zone", ev)
     assert row["payload"] == {}
 
 
 def test_event_to_row_gaze_payload_keeps_direction():
-    ev = GazeEvent(start=5.0, end=8.0, direction="right_down", severity="mid")
+    ev = GazeEvent(start=5.0, end=8.0, direction="right_down")
     row = _event_to_row("aid", "gaze", ev)
     assert row["payload"] == {"direction": "right_down"}
 
 
 def test_event_to_row_content_gap_payload_keeps_description():
-    ev = ContentGapEvent(start=15.0, end=30.0, description="설명 부족", severity="mid")
+    ev = ContentGapEvent(start=15.0, end=30.0, description="설명 부족")
     row = _event_to_row("aid", "content_gap", ev)
     assert row["payload"] == {"description": "설명 부족"}
 
@@ -73,28 +71,12 @@ def test_row_to_event_returns_correct_class():
         "dimension": "cps",
         "start_sec": 2.0,
         "end_sec": 12.0,
-        "severity": "high",
         "payload": {"cps": 11.25, "kind": "too_fast"},
     }
     ev = _row_to_event(row)
     assert isinstance(ev, CPSEvent)
     assert ev.cps == 11.25
     assert ev.kind == "too_fast"
-    assert ev.severity == "high"
-
-
-def test_row_to_event_null_severity_uses_class_default():
-    # DB가 NULL severity를 돌려도 이벤트 클래스 default로 폴백.
-    row = {
-        "dimension": "filler",
-        "start_sec": 1.0,
-        "end_sec": 1.5,
-        "severity": None,
-        "payload": {"text": "음"},
-    }
-    ev = _row_to_event(row)
-    assert isinstance(ev, FillerEvent)
-    assert ev.severity == "mid"  # 모든 EventClass의 default (v1.0 통일)
 
 
 def test_row_to_event_null_payload_treated_as_empty():
@@ -102,7 +84,6 @@ def test_row_to_event_null_payload_treated_as_empty():
         "dimension": "dead_zone",
         "start_sec": 10.0,
         "end_sec": 42.0,
-        "severity": "high",
         "payload": None,
     }
     ev = _row_to_event(row)
@@ -116,16 +97,16 @@ def test_row_to_event_null_payload_treated_as_empty():
 
 def test_roundtrip_each_dimension():
     cases: list[tuple[str, BaseModel]] = [
-        ("filler", FillerEvent(start=1.0, end=1.5, text="음", severity="mid")),
+        ("filler", FillerEvent(start=1.0, end=1.5, text="음")),
         (
             "cps",
-            CPSEvent(start=2.0, end=12.0, cps=11.25, kind="too_fast", severity="high"),
+            CPSEvent(start=2.0, end=12.0, cps=11.25, kind="too_fast"),
         ),
-        ("dead_zone", DeadZoneEvent(start=10.0, end=42.0, severity="high")),
-        ("gaze", GazeEvent(start=5.0, end=8.0, direction="right_down", severity="mid")),
+        ("dead_zone", DeadZoneEvent(start=10.0, end=42.0)),
+        ("gaze", GazeEvent(start=5.0, end=8.0, direction="right_down")),
         (
             "content_gap",
-            ContentGapEvent(start=15.0, end=30.0, description="설명 부족", severity="mid"),
+            ContentGapEvent(start=15.0, end=30.0, description="설명 부족"),
         ),
     ]
     for dim, ev in cases:
@@ -144,10 +125,10 @@ def test_collect_finding_rows_picks_only_present_dimensions():
     state: AnalysisState = {
         "video_path": "x",
         "category": "lecture",
-        "fillers": [FillerEvent(start=0.0, end=0.5, text="음", severity="low")],
+        "fillers": [FillerEvent(start=0.0, end=0.5, text="음")],
         "cps_anomalies": [],
-        "dead_zones": [DeadZoneEvent(start=10.0, end=42.0, severity="high")],
-        "gaze_issues": [GazeEvent(start=5.0, end=8.0, direction="right_down", severity="mid")],
+        "dead_zones": [DeadZoneEvent(start=10.0, end=42.0)],
+        "gaze_issues": [GazeEvent(start=5.0, end=8.0, direction="right_down")],
         "content_gaps": [],
     }
     rows = _collect_finding_rows("aid", state)
@@ -165,8 +146,8 @@ def test_collect_finding_rows_preserves_analysis_id_in_each_row():
         "video_path": "x",
         "category": "lecture",
         "fillers": [
-            FillerEvent(start=0.0, end=0.5, text="음", severity="low"),
-            FillerEvent(start=2.0, end=2.5, text="어", severity="low"),
+            FillerEvent(start=0.0, end=0.5, text="음"),
+            FillerEvent(start=2.0, end=2.5, text="어"),
         ],
     }
     rows = _collect_finding_rows("AID-42", state)
