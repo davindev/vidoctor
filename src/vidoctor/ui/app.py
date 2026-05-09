@@ -29,6 +29,8 @@ from vidoctor.graph.state import (
     DeadZoneEvent,
     FillerEvent,
     GazeEvent,
+    Suggestion,
+    parse_finding_ref,
 )
 from vidoctor.repository import (
     complete_analysis,
@@ -37,6 +39,7 @@ from vidoctor.repository import (
     fail_analysis,
     get_analysis_findings,
     get_analysis_storage_path,
+    get_analysis_suggestions,
     insert_analysis,
     insert_video,
     list_analyses,
@@ -138,8 +141,10 @@ def _cached_list_analyses(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def _fmt_time(seconds: float) -> str:
-    m, s = divmod(int(seconds), 60)
-    return f"{m}:{s:02d}"
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def _event_button_label(dim: str, ev: _FindingEvent) -> str:
@@ -191,6 +196,12 @@ def _cached_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
     return get_analysis_findings(analysis_id)
 
 
+@st.cache_data(ttl=300)
+def _cached_suggestions(analysis_id: str) -> list[Suggestion]:
+    """suggestions도 분석 완료 후 immutable. priority 오름차순 정렬된 상태로 옴."""
+    return get_analysis_suggestions(analysis_id)
+
+
 def _render_video_player(analysis_id: str) -> None:
     try:
         signed_url = _cached_video_url(analysis_id)
@@ -208,6 +219,7 @@ def _invalidate_caches() -> None:
     _cached_list_analyses.clear()
     _cached_video_url.clear()
     _cached_findings.clear()
+    _cached_suggestions.clear()
 
 
 def _confirm_key(analysis_id: str) -> str:
@@ -236,6 +248,57 @@ def _render_delete_section(analysis_id: str) -> None:
     if st.button("🗑 영상 + 분석 삭제", key=f"del_{analysis_id}"):
         st.session_state[confirm_key] = True
         st.rerun()
+
+
+def _resolve_finding_ref(
+    findings: dict[str, list[BaseModel]], ref: str
+) -> tuple[str, float] | None:
+    """ref → (차원 한국어 라벨, 시작 시각). 무효 ref·인덱스 범위 밖이면 None."""
+    parsed = parse_finding_ref(ref)
+    if parsed is None:
+        return None
+    dim, idx = parsed
+    events = findings.get(dim, [])
+    if not 0 <= idx < len(events):
+        return None
+    ev = cast(_FindingEvent, events[idx])
+    return DIMENSION_LABEL.get(dim, dim), ev.start
+
+
+_REF_BUTTONS_PER_ROW = 6
+
+
+def _render_suggestions(analysis_id: str) -> None:
+    suggestions = _cached_suggestions(analysis_id)
+    if not suggestions:
+        st.caption("개선 제안 없음.")
+        return
+    findings = _cached_findings(analysis_id)
+    for sug_idx, sug in enumerate(suggestions):
+        with st.container(border=True):
+            cols = st.columns([10, 1])
+            cols[0].markdown(f"**{sug.text}**")
+            cols[1].caption(f"P{sug.priority}")
+            if sug.finding_refs:
+                st.caption("근거 — 클릭하면 영상이 해당 구간으로 이동")
+                for chunk_start in range(0, len(sug.finding_refs), _REF_BUTTONS_PER_ROW):
+                    chunk = sug.finding_refs[chunk_start : chunk_start + _REF_BUTTONS_PER_ROW]
+                    btn_cols = st.columns(_REF_BUTTONS_PER_ROW)
+                    for i, ref in enumerate(chunk):
+                        info = _resolve_finding_ref(findings, ref)
+                        with btn_cols[i]:
+                            if info is None:
+                                st.caption(f"`{ref}` (?)")
+                                continue
+                            label, start = info
+                            key = f"sug-jmp-{analysis_id}-{sug_idx}-{chunk_start + i}"
+                            if st.button(
+                                f"{label} {_fmt_time(start)}",
+                                key=key,
+                                use_container_width=True,
+                            ):
+                                st.session_state[_jump_key(analysis_id)] = start
+                                st.rerun()
 
 
 def _render_findings_grid(analysis_id: str) -> None:
@@ -311,6 +374,9 @@ with st.sidebar:
 selected_id = st.session_state.get("selected_analysis_id")
 if selected_id:
     _render_video_player(selected_id)
+    st.divider()
+    st.subheader("개선 제안")
+    _render_suggestions(selected_id)
     st.divider()
     st.subheader("이슈 목록 — 클릭하면 영상이 해당 구간으로 이동")
     _render_findings_grid(selected_id)
