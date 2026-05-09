@@ -6,6 +6,7 @@ rule 없이 차원 신호의 일반적 의미만 정의 — 영상 도메인은 
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import cast
@@ -28,6 +29,8 @@ from vidoctor.llm import (
     extract_token_usage,
     get_chat_model,
 )
+
+_log = logging.getLogger(__name__)
 
 _MODEL = "gpt-4o-mini"
 
@@ -157,6 +160,44 @@ def _collect_findings(state: AnalysisState) -> _CollectedFindings:
     return _CollectedFindings(findings=findings, extras=extras)
 
 
+@dataclass(frozen=True)
+class _RefValidationStats:
+    """LLM 출력 finding_refs 검증 결과 통계 (모니터링·테스트용)."""
+
+    input_suggestions: int
+    kept_suggestions: int
+    invalid_refs_removed: int
+    suggestions_dropped: int  # 유효 ref가 0개로 떨어져 통째로 drop된 suggestion 수
+
+
+def _validate_refs(
+    items: list[_SuggestionItem], valid_refs: set[str]
+) -> tuple[list[_SuggestionItem], _RefValidationStats]:
+    """LLM이 환각한 ref를 제거하고, 근거가 0이 된 suggestion은 drop.
+
+    LLM은 종종 prompt에 없던 ref(예: 'filler:99', 'gaze:0' 미존재)를 만들어내거나
+    오타를 낸다. UI는 invalid ref를 '(?)'로 표시할 수 있지만 — 그 단계에 도달하기 전에
+    저장 직전에 걸러내는 것이 사용자 신뢰·DB 정합성 측면에서 낫다. 검증 결과는 stats로
+    노출해 호출부가 LLM 품질을 추적할 수 있게 한다.
+    """
+    cleaned: list[_SuggestionItem] = []
+    invalid_count = 0
+    dropped = 0
+    for item in items:
+        valid = [r for r in item.finding_refs if r in valid_refs]
+        invalid_count += len(item.finding_refs) - len(valid)
+        if not valid:
+            dropped += 1
+            continue
+        cleaned.append(item.model_copy(update={"finding_refs": valid}))
+    return cleaned, _RefValidationStats(
+        input_suggestions=len(items),
+        kept_suggestions=len(cleaned),
+        invalid_refs_removed=invalid_count,
+        suggestions_dropped=dropped,
+    )
+
+
 def _build_message(collected: _CollectedFindings, state: AnalysisState) -> HumanMessage:
     category = state["category"]
     active = ", ".join(CATEGORY_DIMENSIONS[category])
@@ -233,8 +274,19 @@ async def build_suggestions(
         completion_tokens=completion_tok,
     )
 
+    valid_refs = {f.ref for f in collected.findings}
+    cleaned, stats = _validate_refs(parsed.suggestions, valid_refs)
+    if stats.invalid_refs_removed or stats.suggestions_dropped:
+        _log.info(
+            "suggestion ref validation: kept=%d/%d invalid_refs=%d dropped=%d",
+            stats.kept_suggestions,
+            stats.input_suggestions,
+            stats.invalid_refs_removed,
+            stats.suggestions_dropped,
+        )
+
     suggestions = [
         Suggestion(text=s.text, finding_refs=s.finding_refs)
-        for s in parsed.suggestions
+        for s in cleaned
     ]
     return suggestions, metrics
