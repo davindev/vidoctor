@@ -965,6 +965,42 @@ GPT-4o multi-image + 미스매치-only rubric (negative 명시) +
 max_tokens=1024 / issues max_length=5 → structured output → IoU 0.2 매칭
 ```
 
+### Generate Suggestions — 5차원 finding 종합 LLM 노드
+
+`generate_suggestions` 노드가 v1.0 stub(`return {"suggestions": []}`)에서 production 함수로 전환. 5차원 event를 gpt-4o-mini structured output에 전달해 한국어 개선 제안 리스트를 생성한다.
+
+**도메인 오버핏 회피 메커니즘**:
+- rubric에 카테고리별 hardcoded 가이드(예: "강의는 슬라이드 다듬기", "vlog는 컷 추가") 없음. **차원 신호의 일반적 의미만 정의** (filler=전달력, cps=청취 부담, dead_zone=이탈 위험, gaze=응시 안정성, content_gap=시각·발화 불일치).
+- 영상 도메인은 input의 finding 패턴 + 활성 차원으로 LLM이 추정해 톤 조정. 카테고리는 참고용 메타로만 전달.
+- 검증: lecture(5차원 finding) / vlog(3차원 finding) mock state 두 케이스에서 슬라이드 specific 표현 / 강의 specific 표현이 적절한 케이스에만 등장 + 다른 케이스에선 일반화된 표현(예: vlog dead_zone → "필요한 내용을 미리 준비하고 발화하세요").
+
+**prompt·출력 통제**:
+- `MAX_FINDINGS_PER_DIM=30` 차원당 cap + "추가 N건 생략" 집계로 prompt 폭발 차단. finding 1k+여도 패턴 인식엔 상위 30건이면 충분하고, 누적된 신호는 cap 정보로 LLM에 전달.
+- `_SuggestionResponse.suggestions` `max_length=8` / `_SuggestionItem.description` `max_length=200` / `max_tokens=512` — content_gap에서 정착시킨 안전장치 동일 적용.
+- finding 0건이면 LLM 호출 생략 → 비용 0.
+
+**typed dispatch — getattr fallback 회피**:
+초기 구현은 `getattr(event, "text", "")` 패턴이었으나 typed Pydantic 모델 우회로 silent degrade 위험. **각 event 모델(`FillerEvent` / `CPSEvent` / ...)에 `summary()` 메서드 추가**해 다형성으로 풀고, `_collect_findings`는 `event.summary()`만 호출 — 차원 추가 시 모델 정의에서 누락이 컴파일 타임에 드러난다. `state.py`에 `iter_dimension_events` helper도 추가해 `# type: ignore[literal-required]`를 한 곳에 모음.
+
+**비용·latency**: gpt-4o-mini, 평균 finding 5~10건 / prompt ~수백 token / 출력 ~300 token → ~$0.0001/영상, 1~2s. content_gap detection($0.02)·전체 파이프라인($0.20 목표) 대비 무시 가능.
+
+#### 한계
+
+- **priority가 모두 0으로 수렴**. rubric에 "0=가장 높음, 빈도·구간 길이·시청자 영향 기반"이라 명시했으나 LLM이 차원별 우선순위 차별화 약함. v1.1 lever: severity-weighted priority(detector severity 활용), 사용자 피드백 기반 학습.
+- **제안 품질 정량 평가 라벨 없음**. content_gap 라벨처럼 "이 finding엔 이런 제안이 적절"하다는 ground truth가 없음 → Cohen's κ 같은 평가 어려움. v1.1: 사용자 채택률·수정률을 메트릭으로 도입.
+- **finding_refs 검증 안 함**. LLM이 무효 ref(예: 존재 안 하는 인덱스) 반환해도 그대로 통과. 호출 후 검증 단계로 보강 가능.
+
+#### 정책 정착
+
+```
+state.py: 각 EventModel.summary() 메서드 + iter_dimension_events helper
+suggestions.py:
+  _collect_findings (cap 30/dim + extras 집계) → _build_message (rubric + 카테고리
+  메타 + findings + extras) → gpt-4o-mini structured output (max_tokens=512,
+  suggestions max_length=8) → list[Suggestion]
+graph/nodes.py: lazy import build_suggestions
+```
+
 ### 공통 교훈
 
 - **모든 변경은 lecture/vlog 두 카테고리 평가 동시 진행.** 한쪽만 보면 다른 쪽이 깎이는 걸
