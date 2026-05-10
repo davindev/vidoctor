@@ -5,3 +5,11 @@
 # 함께 올려야 큰 파일이 axios 단계에서 잘리지 않는다.
 maxUploadSize = 300
 maxMessageSize = 300
+
+[theme]
+# Claude warm editorial 디자인 시스템 — 테라코타 액센트 + 웜톤 잉크 + 크림 배경.
+primaryColor = "#D97757"
+backgroundColor = "#FAF7F2"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F1A17"
+base = "light"
