@@ -349,6 +349,25 @@ def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
     ]
 
 
+def get_analysis_video_meta(analysis_id: str) -> dict[str, Any] | None:
+    """analysis_id → 연결된 video의 category/storage_path/duration_sec 메타.
+
+    분석 결과 헤더(파일명 + 카테고리 pill)에 필요. 없으면 None.
+    """
+    res = (
+        _client()
+        .table("analyses")
+        .select("videos(category, storage_path, duration_sec)")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    data = cast(dict[str, Any] | None, res.data)
+    if not data:
+        return None
+    return cast(dict[str, Any] | None, data.get("videos"))
+
+
 def get_analysis_storage_path(analysis_id: str) -> str | None:
     """analysis_id → 연결된 video.storage_path(R2 객체 키). 없으면 None."""
     res = (
