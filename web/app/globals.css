@@ -1,0 +1,74 @@
+/* Pretendard — 한국어 본문 폰트. CSS 스펙상 @import는 모든 rule보다 위여야 하고,
+   Tailwind v4의 `@import "tailwindcss"`가 내부적으로 rule을 펼치므로 *그 위*에 배치. */
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/[email protected]/dist/web/static/pretendard.min.css");
+
+@import "tailwindcss";
+
+/* Tailwind v4 CSS-first config — `@theme` 안의 토큰이 자동으로 utility class를 생성.
+   예: `--color-accent` → `bg-accent`, `text-accent`, `border-accent`. 디자인 토큰은
+   Vidoctor.html (Claude warm editorial) 그대로. */
+@theme {
+  --color-accent: #d97757;
+  --color-accent-strong: #c15f3c;
+  --color-accent-soft: #f2ddd0;
+  --color-accent-tint: #faefe7;
+
+  --color-ink: #1f1a17;
+  --color-ink-2: #2e2722;
+  --color-ink-3: #6b5f58;
+  --color-ink-4: #9a8e86;
+
+  --color-line: #eae2d6;
+  --color-line-2: #dbd0bf;
+
+  --color-page: #faf7f2;
+  --color-surface: #ffffff;
+  --color-surface-tint: #f5efe6;
+
+  --color-danger: #b5483d;
+
+  /* Pretendard는 CSS @import로, 나머지는 next/font가 주입한 CSS 변수를 참조 — html
+     className에 `${sourceSerif.variable} ${jetbrainsMono.variable}`이 붙어야 동작. */
+  --font-sans: "Pretendard", -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-serif: var(--font-source-serif-4), "Source Serif Pro", Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular,
+    Menlo, monospace;
+}
+
+html,
+body {
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* 페이지 진입 fade-in — Streamlit 시절과 동일한 톤 */
+@keyframes vidPageFade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vid-page-enter {
+  animation: vidPageFade 0.35s ease-out;
+}
+
+/* Pipeline 컴포넌트 — wire flow 애니메이션 + 노드 스피너 */
+@keyframes vidWireFlow {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+@keyframes vidSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
