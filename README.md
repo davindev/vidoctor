@@ -16,10 +16,11 @@ AI 영상 감수 에이전트 — 영상을 업로드하면 5차원으로 분석
 
 ## v1.0 vs v1.1 (계획)
 
-v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든 차원이 default(`mid`)로
-통일되어 있고, 평가 메트릭도 차원별 F1만 측정. v1.1에서 다음을 보완:
+v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity 차등과 suggestion priority는
+임계 결정 근거(라벨링·평가)가 갖춰지지 않은 시점에 분기에 의미가 없다고 판단해 스펙
+아웃했고, 평가 메트릭도 차원별 F1만 측정. v1.1에서 다음을 보완:
 
-- **차원별 severity 결정 로직 재도입**
+- **차원별 severity 차등 재도입** (현재 스키마에서 제거됨, migration 0004 참고)
   - filler: Tier 1 모음 늘임 / repetition burst 가중
   - cps: 임계 초과 정도(절대값)
   - dead_zone: 카테고리별 duration 구간
@@ -28,6 +29,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 - **severity-weighted F1 + Cohen's κ** (라벨러 ≥ 2명)
 - **자동 ROI 강건화**: 4코너 폴백 실패 시 9분할 폴백 / 사용자 수동 ROI (Streamlit drag)
 - **Self-correction(repair+restart) / Backchannel** filler 차원 확장
+- **suggestion priority 재도입** — severity 차등이 들어오면 그것을 가중치로 활용
 
 ## 잔여 작업
 
@@ -38,7 +40,6 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 | 작업 | 현 상태 | 근거 |
 |---|---|---|
-| `generate_suggestions` 실구현 | `return {"suggestions": []}` 스텁 (`graph/nodes.py`). DB `suggestions` 테이블 항상 비어 있음 | 기획서 1절 "개선 제안" 출력 + LangChain structured output 어필 |
 | Dockerfile + Fly.io 배포 | `Dockerfile` / `fly.toml` 없음, 시연 URL 없음 | 기획서 2.3·2.5 "필수" |
 
 ### P1 — 3분 영상 시연 안정성
@@ -52,7 +53,6 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 | 작업 | 현 상태 |
 |---|---|
-| 영상당 비용·latency UI 노출 | `complete_analysis(cost_usd=...)` 시그니처만 존재, 호출자가 `None` 전달 |
 | MLflow A/B run 결과 README 첨부 | 표는 있으나 실제 run·스크린샷 없음 |
 | Langfuse 대시보드 스크린샷 | trace는 흐르나 README 미첨부 |
 | GitHub Actions CI (pytest + 골든셋 회귀) | `.github/` 디렉토리 없음 |
@@ -63,7 +63,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity는 모든
 
 - Storage signed URL 직접 업로드 (현재 백엔드 경유로 R2 PutObject)
 - DeepEval + Cohen's κ — 라벨러 ≥ 2명 전제
-- Label Studio 연동, severity 차등 + severity-weighted F1
+- Label Studio 연동 (severity 차등 라벨링 도구) — severity 재도입은 위 v1.1 계획 항목
 - pyannote VAD 동적 삽입 — `huggingface_token` 환경변수만 있고 코드 미사용
   (filler가 사전 매칭 단일 차원으로 굳음)
 - 자동 카테고리 분류, 신규 카테고리(발표/스피치 등) 정밀 튜닝
@@ -1014,19 +1014,43 @@ UI에서 사용자 검증: `rubric_v3` 정착 후에도 detected가 `[80.7, 105.
 
 #### 한계
 
-- **priority가 모두 0으로 수렴**. rubric에 "0=가장 높음, 빈도·구간 길이·시청자 영향 기반"이라 명시했으나 LLM이 차원별 우선순위 차별화 약함. v1.1 lever: severity-weighted priority(detector severity 활용), 사용자 피드백 기반 학습.
 - **제안 품질 정량 평가 라벨 없음**. content_gap 라벨처럼 "이 finding엔 이런 제안이 적절"하다는 ground truth가 없음 → Cohen's κ 같은 평가 어려움. v1.1: 사용자 채택률·수정률을 메트릭으로 도입.
-- **finding_refs 검증 안 함**. LLM이 무효 ref(예: 존재 안 하는 인덱스) 반환해도 그대로 통과. 호출 후 검증 단계로 보강 가능.
+
+#### 후속 정착 — v1.0 단순화 + LLM 환각 방어
+
+초기 한계로 적었던 두 항목 중 priority·finding_refs 검증은 후속 사이클에서 해소됐다.
+
+- **priority가 모두 0으로 수렴 → 차원 자체를 스펙아웃.** rubric의 "0=가장 높음" 정의가
+  LLM 출력 차별화로 이어지지 않는다는 진단을 그대로 받아들였다. detector severity와
+  분리된 LLM-only priority는 임계 결정 근거 없이 추가하면 *분기를 흉내내는 노이즈*가
+  된다. v1.1에서 severity 차등이 들어올 때 그것을 가중치로 재도입하기로 정리하고
+  컬럼·UI·rubric·골든셋 라벨 일괄 제거 (migration 0004). suggestion 정렬은 LLM 출력
+  순서 보존(`order by id`).
+- **finding_refs 검증 추가.** LLM은 prompt에 없던 ref(예: `filler:99`, 미존재 차원
+  `gaze:0`)를 만들거나 오타를 낸다. UI의 `(?)` 표시 단계까지 흘려보내는 대신, 저장
+  직전에 `_validate_refs`로 invalid ref 제거 + 모든 ref가 invalid이면 suggestion
+  자체 drop. `_RefValidationStats(input/kept/invalid_refs_removed/dropped)`로 노출해
+  LLM 환각률을 INFO 로그로 추적.
+- **비용·latency 가시성.** `LLMCallMetrics` + `state.step_metrics`(operator.add
+  reducer로 노드 누적) → `complete_analysis`가 합산해 `analyses.cost_usd` + JSON
+  metadata로 보존. UI 분석 카드 상단에 총 비용·처리 시간을 표시하고 expander로
+  step별(content_gap·suggestions) 분리 정보 노출. 평가 스크립트도 동일 단가표를
+  쓰도록 `scripts/content_gap_eval.py`의 중복 헬퍼를 `llm.py`로 일원화.
 
 #### 정책 정착
 
 ```
-state.py: 각 EventModel.summary() 메서드 + iter_dimension_events helper
+state.py:
+  각 EventModel.summary() 메서드 + iter_dimension_events helper
+  step_metrics 채널 (operator.add reducer)
 suggestions.py:
-  _collect_findings (cap 30/dim + extras 집계) → _build_message (rubric + 카테고리
-  메타 + findings + extras) → gpt-4o-mini structured output (max_tokens=512,
-  suggestions max_length=8) → list[Suggestion]
-graph/nodes.py: lazy import build_suggestions
+  _collect_findings (cap 30/dim + extras 집계) → _build_message → gpt-4o-mini
+  structured output(include_raw=True) → _validate_refs(valid_refs 대조) →
+  list[Suggestion] + LLMCallMetrics
+graph/nodes.py:
+  detect_content_gap·generate_suggestions가 metrics push (lazy import 유지)
+repository.py:
+  complete_analysis가 step_metrics 합산 → cost_usd + metadata.step_metrics 보존
 ```
 
 ### 공통 교훈

@@ -4,7 +4,7 @@ from tests._helpers import _w
 from vidoctor.audio.filler import detect_filler_events
 
 
-@pytest.mark.parametrize("text", ["음", "어", "그", "이제", "그러니까"])
+@pytest.mark.parametrize("text", ["음", "어", "그", "이제"])
 def test_filler_dictionary_word_detected(text: str):
     events = detect_filler_events([_w(text, 0.0, 0.3)])
     assert len(events) == 1
@@ -18,6 +18,13 @@ def test_punctuation_normalized():
 
 def test_normal_word_not_detected():
     events = detect_filler_events([_w("안녕하세요", 0.0, 0.5)])
+    assert events == []
+
+
+def test_logical_connective_not_filler():
+    # "그러니까/그래서"는 강의에서 논리 연결사로 정상 사용 — false positive 차단 의도.
+    # filler.py FILLERS 사전에서 의도적 미포함이므로 detection 0건이어야 한다.
+    events = detect_filler_events([_w("그러니까", 0.0, 0.4)])
     assert events == []
 
 
