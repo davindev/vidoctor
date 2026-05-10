@@ -19,8 +19,12 @@ from vidoctor.graph.state import (
 )
 
 
-def _detector_node_name(dim: Dimension) -> str:
-    """차원 이름 → graph 노드 이름. 한 곳에서 변환해 매핑 일관성 유지."""
+def detector_node_name(dim: Dimension) -> str:
+    """차원 이름 → graph 노드 이름. 한 곳에서 변환해 매핑 일관성 유지.
+
+    UI 진행률·테스트가 차원으로부터 노드 이름을 derive할 때도 이 함수를 사용해
+    f-string 인라인 재구현을 막는다. (`detect_filler`, `detect_cps`, ...)
+    """
     return f"detect_{dim}"
 
 
@@ -35,7 +39,7 @@ _DETECTORS: dict[Dimension, Callable[[AnalysisState], Awaitable[dict]]] = {
     "content_gap": detect_content_gap,
 }
 
-_ALL_DETECTOR_NODES: tuple[str, ...] = tuple(_detector_node_name(d) for d in _DETECTORS)
+_ALL_DETECTOR_NODES: tuple[str, ...] = tuple(detector_node_name(d) for d in _DETECTORS)
 
 
 def _route_by_category(state: AnalysisState) -> list[str]:
@@ -44,7 +48,7 @@ def _route_by_category(state: AnalysisState) -> list[str]:
     LangGraph add_conditional_edges는 list 반환 시 fan-out — 반환된 노드들이 동시 실행.
     비활성 차원은 노드 자체가 호출되지 않아 state에 키도 안 생긴다.
     """
-    return [_detector_node_name(d) for d in CATEGORY_DIMENSIONS[state["category"]]]
+    return [detector_node_name(d) for d in CATEGORY_DIMENSIONS[state["category"]]]
 
 
 def build_graph() -> CompiledStateGraph:
@@ -63,7 +67,7 @@ def build_graph() -> CompiledStateGraph:
         # LangGraph add_node의 StateNode 제네릭 추론이 dict value의 Callable과 매칭되지
         # 않아 ignore. 직접 호출(g.add_node("name", detect_fn))은 통과하지만 그 형태는
         # 5차원 SSOT 회복 의도와 어긋남.
-        g.add_node(_detector_node_name(dim), fn)  # pyright: ignore[reportArgumentType]
+        g.add_node(detector_node_name(dim), fn)  # pyright: ignore[reportArgumentType]
     g.add_node("generate_suggestions", generate_suggestions)
 
     g.add_edge(START, "transcribe")

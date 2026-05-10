@@ -23,10 +23,13 @@ from pydantic import BaseModel
 
 from vidoctor import __version__
 from vidoctor.graph import Category, run_analysis
+from vidoctor.graph.pipeline import detector_node_name
 from vidoctor.graph.state import (
+    CATEGORY_DIMENSIONS,
     ContentGapEvent,
     CPSEvent,
     DeadZoneEvent,
+    Dimension,
     FillerEvent,
     GazeEvent,
     Suggestion,
@@ -90,6 +93,31 @@ _GAZE_DIRECTION_LABEL: dict[str, str] = {
 # 5차원 finding 이벤트의 union — start/end property 직접 접근을 타입 안전하게.
 _FindingEvent = FillerEvent | CPSEvent | DeadZoneEvent | GazeEvent | ContentGapEvent
 
+# detector 외 진행률 라벨 — detector 라벨은 DIMENSION_LABEL과 결합해 derive하므로
+# 차원 추가 시엔 DIMENSION_LABEL만 손대면 된다.
+_NON_DETECTOR_NODE_LABEL: dict[str, str] = {
+    "transcribe": "음성 전사",
+    "generate_suggestions": "개선 제안 생성",
+}
+
+
+def _node_label(node: str) -> str:
+    for dim, label in DIMENSION_LABEL.items():
+        if node == detector_node_name(cast(Dimension, dim)):
+            return f"{label} 검출"
+    return _NON_DETECTOR_NODE_LABEL.get(node, node)
+
+
+def _expected_node_order(category: Category) -> list[str]:
+    detectors = [detector_node_name(d) for d in CATEGORY_DIMENSIONS[category]]
+    return ["transcribe", *detectors, "generate_suggestions"]
+
+
+def _render_progress_lines(completed: set[str], expected: list[str]) -> str:
+    return "\n".join(
+        f"- {'✓' if n in completed else '⏳'} {_node_label(n)}" for n in expected
+    )
+
 
 def _video_duration(path: Path) -> float | None:
     cap = cv2.VideoCapture(str(path))
@@ -122,7 +150,22 @@ def _process_uploaded_video(uploaded_file, category: Category) -> str:  # noqa: 
 
         try:
             with st.status("5차원 분석 실행 중 (1~3분)...", expanded=True) as s:
-                state = asyncio.run(run_analysis(str(tmp_path), category))
+                expected_nodes = _expected_node_order(category)
+                completed_nodes: set[str] = set()
+                progress_box = st.empty()
+                progress_box.markdown(
+                    _render_progress_lines(completed_nodes, expected_nodes)
+                )
+
+                def on_node(name: str) -> None:
+                    completed_nodes.add(name)
+                    progress_box.markdown(
+                        _render_progress_lines(completed_nodes, expected_nodes)
+                    )
+
+                state = asyncio.run(
+                    run_analysis(str(tmp_path), category, on_node_complete=on_node)
+                )
                 s.update(label="결과 저장 중...", state="running")
                 complete_analysis(analysis_id, video_id, state)
                 s.update(label="완료", state="complete")
