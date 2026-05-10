@@ -1095,8 +1095,12 @@ uv sync
 cp .env.example .env
 # .env 채우기 — OPENAI / SUPABASE / R2 / LANGFUSE / HUGGINGFACE 키
 
-# Streamlit 실행
-uv run streamlit run src/vidoctor/ui/app.py
+# 백엔드 (FastAPI) — 터미널 1
+uv run uvicorn vidoctor.api:app --reload --port 8000
+
+# 프론트엔드 (Next.js) — 터미널 2
+cd web && npm install && npm run dev
+# → http://localhost:3000
 
 # 테스트
 uv run pytest

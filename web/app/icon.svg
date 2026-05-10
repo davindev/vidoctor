@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="30" height="30">
+  <title>Vidoctor</title>
+  <circle cx="15" cy="15" r="15" fill="#D97757"/>
+  <text x="15" y="15" text-anchor="middle" dominant-baseline="central"
+        font-family="'Source Serif 4','Source Serif Pro',Georgia,serif"
+        font-weight="500" font-size="16" fill="#FFFFFF">V</text>
+</svg>
