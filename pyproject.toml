@@ -28,6 +28,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.18",
     "sse-starlette>=2.1.0",
+    "yt-dlp>=2025.1.15",
 ]
 
 [dependency-groups]

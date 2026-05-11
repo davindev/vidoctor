@@ -6,15 +6,20 @@ import { IdleForm } from "@/components/IdleForm";
 import { ResultView } from "@/components/ResultView";
 import { Sidebar } from "@/components/Sidebar";
 import { fetchAnalyses, type AnalysisListItem, type Category } from "@/lib/api";
-import { postAnalyze, type AnalyzeEvent } from "@/lib/sse";
+import {
+  postAnalyze,
+  type AnalyzeEvent,
+  type AnalyzeSource,
+  type AnalyzingPhase,
+} from "@/lib/sse";
 
 type AppState =
-  | { kind: "idle" }
+  | { kind: "idle"; lastError: string | null }
   | {
       kind: "analyzing";
       category: Category;
       filename: string | null;
-      uploadDone: boolean;
+      phase: AnalyzingPhase;
       completed: Set<string>;
       errorMessage: string | null;
     }
@@ -22,7 +27,7 @@ type AppState =
 
 export default function Home() {
   const [items, setItems] = useState<AnalysisListItem[]>([]);
-  const [state, setState] = useState<AppState>({ kind: "idle" });
+  const [state, setState] = useState<AppState>({ kind: "idle", lastError: null });
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -44,15 +49,22 @@ export default function Home() {
 
   const handleNewAnalysis = () => {
     if (state.kind === "analyzing") return;
-    setState({ kind: "idle" });
+    setState({ kind: "idle", lastError: null });
   };
 
-  const handleSubmit = async (file: File, category: Category) => {
+  const handleSubmit = async (source: AnalyzeSource, category: Category) => {
+    // URL 흐름은 제목을 다운로드 완료 후에야 알 수 있어 초기 filename=null.
+    // AnalyzingView가 phase==="downloading"이면 "유튜브 URL" placeholder로 보정한다.
+    const initialFilename =
+      source.kind === "file" ? source.file.name : null;
+    const initialPhase: AnalyzingPhase =
+      source.kind === "url" ? "downloading" : "uploading";
+
     setState({
       kind: "analyzing",
       category,
-      filename: file.name,
-      uploadDone: false,
+      filename: initialFilename,
+      phase: initialPhase,
       completed: new Set(),
       errorMessage: null,
     });
@@ -66,15 +78,22 @@ export default function Home() {
 
     try {
       await postAnalyze({
-        file,
+        source,
         category,
         onEvent: (ev: AnalyzeEvent) => {
           setState((prev) => {
             if (prev.kind !== "analyzing") return prev;
             switch (ev.type) {
+              case "status":
+                return prev.phase === ev.phase ? prev : { ...prev, phase: ev.phase };
+              case "metadata":
+                return prev.filename === ev.filename
+                  ? prev
+                  : { ...prev, filename: ev.filename };
               case "uploaded":
-                return { ...prev, uploadDone: true };
+                return prev.phase === "running" ? prev : { ...prev, phase: "running" };
               case "node": {
+                if (prev.completed.has(ev.name)) return prev;
                 const next = new Set(prev.completed);
                 next.add(ev.name);
                 return { ...prev, completed: next };
@@ -96,8 +115,8 @@ export default function Home() {
       setState({
         kind: "analyzing",
         category,
-        filename: file.name,
-        uploadDone: false,
+        filename: initialFilename,
+        phase: initialPhase,
         completed: new Set(),
         errorMessage: e instanceof Error ? e.message : String(e),
       });
@@ -107,12 +126,21 @@ export default function Home() {
       void refreshHistory();
       return;
     }
-    // 에러 또는 unexpected stream close — 사용자 잠금 방지하기 위해 idle 복귀.
-    setState((prev) => (prev.kind === "analyzing" ? { kind: "idle" } : prev));
+    // 에러 또는 unexpected stream close — 사용자가 메시지를 읽을 수 있도록 idle로
+    // 복귀하되 lastError를 들고 가서 IdleForm 상단에 배너로 노출.
+    setState((prev) => {
+      if (prev.kind !== "analyzing") return prev;
+      const msg =
+        prev.errorMessage ??
+        (status.exit === "stream-closed"
+          ? "분석이 완료되기 전에 연결이 끊어졌습니다."
+          : "분석 중 오류가 발생했습니다.");
+      return { kind: "idle", lastError: msg };
+    });
   };
 
   const handleDeleted = async () => {
-    setState({ kind: "idle" });
+    setState({ kind: "idle", lastError: null });
     await refreshHistory();
   };
 
@@ -130,13 +158,17 @@ export default function Home() {
       />
       <main>
         {state.kind === "idle" && (
-          <IdleForm disabled={false} onSubmit={handleSubmit} />
+          <IdleForm
+            disabled={false}
+            lastError={state.lastError}
+            onSubmit={handleSubmit}
+          />
         )}
         {state.kind === "analyzing" && (
           <AnalyzingView
             category={state.category}
             filename={state.filename}
-            uploadDone={state.uploadDone}
+            phase={state.phase}
             completed={state.completed}
             errorMessage={state.errorMessage}
           />

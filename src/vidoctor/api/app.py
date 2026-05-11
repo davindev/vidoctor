@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shutil
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from vidoctor.api.youtube import YouTubeIngestError, download_youtube
 from vidoctor.graph import Category, run_analysis
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
@@ -233,29 +234,51 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _save_upload_to_tmp(uploaded: UploadFile) -> tuple[Path, str]:
+    """UploadFile을 청크 단위로 임시 파일에 떨궈 메모리 폭발 회피."""
+    suffix = Path(uploaded.filename or "video.mp4").suffix or ".mp4"
+    with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        while chunk := await uploaded.read(8 * 1024 * 1024):
+            tmp.write(chunk)
+        return Path(tmp.name), (uploaded.filename or "video.mp4")
+
+
 async def _analyze_stream(
-    uploaded: UploadFile, category: Category
-) -> Any:  # AsyncIterator[str], FastAPI generic 마찰 회피
-    """업로드된 영상을 임시 파일에 저장 → R2 업로드 → graph 실행 → DB 저장.
+    *,
+    upload: UploadFile | None,
+    url: str | None,
+    category: Category,
+) -> AsyncIterator[str]:
+    """영상(파일 업로드 또는 유튜브 URL)을 임시 파일에 떨군 뒤 R2 업로드 → graph 실행 → DB 저장.
 
     각 단계 시점에 SSE 이벤트를 yield. 클라이언트는 `EventSource` 또는 fetch+ReadableStream
     으로 구독해 진행 그래프를 갱신.
     """
-    suffix = Path(uploaded.filename or "video.mp4").suffix or ".mp4"
-    with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        # FastAPI UploadFile은 async file-like — 청크 단위 복사로 메모리 폭발 회피.
-        while chunk := await uploaded.read(8 * 1024 * 1024):
-            tmp.write(chunk)
-        tmp_path = Path(tmp.name)
-
+    tmp_path: Path | None = None
     analysis_id: str | None = None
     video_id: str | None = None
 
     try:
+        # 1) 소스 → 로컬 tmp 파일. URL 경로는 다운로드 단계 표시를 위한 별도 SSE phase.
+        if url is not None:
+            yield _sse("status", {"phase": "downloading"})
+            try:
+                tmp_path, title = await download_youtube(url)
+            except YouTubeIngestError as e:
+                yield _sse("error", {"message": str(e), "analysis_id": None})
+                return
+            filename = f"{title}.mp4"
+            # 다운로드가 끝나야 비로소 영상 제목을 알 수 있다 — 헤더 placeholder
+            # "유튜브 URL"을 실제 제목으로 교체하도록 클라이언트에 통지.
+            yield _sse("metadata", {"filename": filename})
+        else:
+            if upload is None:
+                # endpoint XOR 검증이 빠졌을 때만 발생하는 invariant 위반.
+                raise RuntimeError("upload XOR url invariant broken")
+            tmp_path, filename = await _save_upload_to_tmp(upload)
+
         yield _sse("status", {"phase": "uploading"})
-        storage_path = await asyncio.to_thread(
-            upload_video_file, tmp_path, uploaded.filename or "video.mp4"
-        )
+        storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
 
         # videos·analyses row 만들고 client에 analysis_id 통지 — 이후 graph가 끝나기 전에
         # client가 새로고침해도 in-progress row를 폴링할 수 있게.
@@ -314,19 +337,32 @@ async def _analyze_stream(
                 await asyncio.to_thread(fail_analysis, analysis_id, video_id, str(e))
         yield _sse("error", {"message": str(e), "analysis_id": analysis_id})
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 @app.post("/api/analyze")
 async def analyze(
     category: str = Form(...),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
 ) -> StreamingResponse:
     if category not in CATEGORY_DIMENSIONS:
         raise HTTPException(status_code=400, detail=f"unknown category: {category}")
+    # 파일 XOR URL — 둘 다 들어오거나 둘 다 비면 400.
+    has_file = file is not None and (file.filename or "") != ""
+    has_url = url is not None and url.strip() != ""
+    if has_file == has_url:  # 둘 다 True 또는 둘 다 False
+        raise HTTPException(
+            status_code=400, detail="file 또는 url 중 정확히 하나를 제공해야 합니다."
+        )
     cat = cast(Category, category)
     return StreamingResponse(
-        _analyze_stream(file, cat),
+        _analyze_stream(
+            upload=file if has_file else None,
+            url=url.strip() if has_url and url else None,
+            category=cat,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

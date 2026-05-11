@@ -6,12 +6,13 @@ import {
   type Category,
   type Dimension,
 } from "@/lib/api";
+import type { AnalyzingPhase } from "@/lib/sse";
 
 type NodeState = "waiting" | "active" | "done" | "skipped";
 
 interface Props {
   category: Category;
-  uploadDone: boolean;
+  phase: AnalyzingPhase;
   completed: Set<string>;
   errorMessage: string | null;
 }
@@ -32,7 +33,7 @@ const WIRE_BRANCH_Y = BRANCH_RATIOS.map((r) => r * VIEW_HEIGHT);
 
 function deriveStates(
   category: Category,
-  uploadDone: boolean,
+  phase: AnalyzingPhase,
   completed: Set<string>,
 ): {
   upload: NodeState;
@@ -40,6 +41,7 @@ function deriveStates(
   branches: NodeState[];
   suggest: NodeState;
 } {
+  const uploadDone = phase === "running";
   const transcribeDone = completed.has("transcribe");
   const activeDims = new Set(CATEGORY_DIMENSIONS[category]);
   const branches: NodeState[] = ALL_DIMS.map((dim) => {
@@ -64,9 +66,13 @@ function deriveStates(
   };
 }
 
-function statusText(state: NodeState, doneLabel = "완료"): string {
+function statusText(
+  state: NodeState,
+  doneLabel = "완료",
+  activeLabel = "분석중",
+): string {
   if (state === "done") return doneLabel;
-  if (state === "active") return "분석중";
+  if (state === "active") return activeLabel;
   if (state === "skipped") return "건너뜀";
   return "대기중";
 }
@@ -86,12 +92,17 @@ function progressStep(s: ReturnType<typeof deriveStates>): number {
 
 export function Pipeline({
   category,
-  uploadDone,
+  phase,
   completed,
   errorMessage,
 }: Props) {
-  const states = deriveStates(category, uploadDone, completed);
+  const states = deriveStates(category, phase, completed);
   const step = progressStep(states);
+  // URL 흐름의 다운로드 → R2 업로드를 첫 노드 한 곳에서 표시. 완료 시점부터는 "업로드 완료" 고정.
+  const uploadLabel =
+    phase === "downloading" ? "유튜브 다운로드" : "영상 업로드";
+  const uploadActiveText =
+    phase === "downloading" ? "다운로드중" : "업로드중";
   const allDone =
     states.upload === "done" &&
     states.transcribe === "done" &&
@@ -157,9 +168,10 @@ export function Pipeline({
         <PipelineNode
           left="6.5%"
           top="50%"
-          label="영상 업로드"
+          label={uploadLabel}
           state={states.upload}
           doneLabel="업로드 완료"
+          activeLabel={uploadActiveText}
         />
         <PipelineNode
           left="35%"
@@ -225,6 +237,7 @@ function PipelineNode({
   label,
   state,
   doneLabel = "완료",
+  activeLabel = "분석중",
   branch = false,
 }: {
   left: string;
@@ -232,6 +245,7 @@ function PipelineNode({
   label: string;
   state: NodeState;
   doneLabel?: string;
+  activeLabel?: string;
   branch?: boolean;
 }) {
   const tone =
@@ -264,7 +278,7 @@ function PipelineNode({
         {state === "active" && <Spinner />}
         {state === "done" && <CheckBadge />}
         {state === "waiting" && <WaitDot />}
-        <span>{statusText(state, doneLabel)}</span>
+        <span>{statusText(state, doneLabel, activeLabel)}</span>
       </div>
     </div>
   );

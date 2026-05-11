@@ -5,16 +5,26 @@
 
 import { API_BASE, type Category } from "./api";
 
+/** 클라이언트 측 진행 단계. 서버는 "downloading" | "uploading"만 보내고, "running"은
+ * `uploaded` 이벤트 후 클라이언트가 derive. */
+export type AnalyzingPhase = "downloading" | "uploading" | "running";
+
 export type AnalyzeEvent =
-  | { type: "status"; phase: "uploading" }
+  | { type: "status"; phase: "downloading" | "uploading" }
+  | { type: "metadata"; filename: string }
   | { type: "started"; analysis_id: string }
   | { type: "uploaded" }
   | { type: "node"; name: string }
   | { type: "complete"; analysis_id: string }
   | { type: "error"; message: string; analysis_id: string | null };
 
+/** 입력 소스 — 파일 업로드 또는 유튜브 URL. */
+export type AnalyzeSource =
+  | { kind: "file"; file: File }
+  | { kind: "url"; url: string };
+
 export interface AnalyzeOptions {
-  file: File;
+  source: AnalyzeSource;
   category: Category;
   signal?: AbortSignal;
   onEvent: (ev: AnalyzeEvent) => void;
@@ -40,7 +50,11 @@ function parseFrame(frame: string): AnalyzeEvent | null {
 export async function postAnalyze(opts: AnalyzeOptions): Promise<void> {
   const form = new FormData();
   form.append("category", opts.category);
-  form.append("file", opts.file);
+  if (opts.source.kind === "file") {
+    form.append("file", opts.source.file);
+  } else {
+    form.append("url", opts.source.url);
+  }
 
   const res = await fetch(`${API_BASE}/api/analyze`, {
     method: "POST",

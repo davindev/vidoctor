@@ -3,18 +3,40 @@
 import { useState } from "react";
 import type { Category } from "@/lib/api";
 import { CATEGORY_LABEL } from "@/lib/api";
+import type { AnalyzeSource } from "@/lib/sse";
 import { Dropzone } from "./Dropzone";
 
 interface Props {
   disabled: boolean;
-  onSubmit: (file: File, category: Category) => void;
+  lastError: string | null;
+  onSubmit: (source: AnalyzeSource, category: Category) => void;
 }
 
-export function IdleForm({ disabled, onSubmit }: Props) {
-  const [category, setCategory] = useState<Category>("lecture");
-  const [file, setFile] = useState<File | null>(null);
+type InputMode = "file" | "url";
 
-  const ready = file !== null && !disabled;
+// youtu.be / youtube.com / m.youtube.com — 백엔드 _HOST_PATTERN과 동일 규칙. 다운로드 전
+// 사용자 입력을 빠르게 거르기 위한 UX 가드.
+const YT_URL_RE = /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i;
+
+export function IdleForm({ disabled, lastError, onSubmit }: Props) {
+  const [category, setCategory] = useState<Category>("lecture");
+  const [mode, setMode] = useState<InputMode>("file");
+  const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
+
+  const trimmedUrl = url.trim();
+  const urlValid = YT_URL_RE.test(trimmedUrl);
+  const ready =
+    !disabled && (mode === "file" ? file !== null : urlValid);
+
+  const handleSubmit = () => {
+    if (!ready) return;
+    if (mode === "file" && file) {
+      onSubmit({ kind: "file", file }, category);
+    } else if (mode === "url" && urlValid) {
+      onSubmit({ kind: "url", url: trimmedUrl }, category);
+    }
+  };
 
   return (
     <section className="vid-page-enter mx-auto w-full max-w-[880px] px-16 pt-14 pb-20">
@@ -22,11 +44,35 @@ export function IdleForm({ disabled, onSubmit }: Props) {
         <span className="text-accent">분석</span> 시작하기
       </h1>
       <p className="mt-4 mb-11 max-w-[56ch] text-base leading-[1.65] text-ink-3">
-        영상 카테고리를 선택하고 파일을 업로드하면 자동으로 분석을 시작합니다.
+        영상 카테고리를 선택하고 파일 또는 유튜브 URL을 입력하면 자동으로 분석이
+        시작됩니다.
         <br />
-        업로드 즉시 처리되며, 결과는 좌측{" "}
-        <b className="font-semibold text-ink">이전 기록</b>에 저장됩니다.
+        결과는 좌측 <b className="font-semibold text-ink">이전 기록</b>에 저장됩니다.
       </p>
+
+      {lastError && (
+        <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-4 py-3 text-[13px] text-danger">
+          <svg
+            className="mt-[2px] flex-shrink-0"
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+          >
+            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.4" />
+            <path
+              d="M7 4V7.5M7 9.5V10"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="leading-[1.55]">
+            <div className="font-semibold">이전 분석이 실패했습니다.</div>
+            <div className="mt-0.5 text-ink-2">{lastError}</div>
+          </div>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-line bg-surface">
         {/* Field 01 — Category */}
@@ -69,16 +115,32 @@ export function IdleForm({ disabled, onSubmit }: Props) {
           </div>
         </div>
 
-        {/* Field 02 — Upload */}
+        {/* Field 02 — Source (file or YouTube URL) */}
         <div className="border-b border-line px-6 py-5">
           <div className="mb-3.5 flex items-center gap-2.5">
             <span className="text-[11px] font-medium tracking-[0.04em] text-accent">
               02
             </span>
-            <span className="text-[14.5px] font-semibold">영상 업로드</span>
-            <span className="ml-auto text-xs text-ink-4">max 300MB</span>
+            <span className="text-[14.5px] font-semibold">영상 입력</span>
+            <span className="ml-auto text-xs text-ink-4">
+              {mode === "file" ? "max 300MB" : "최대 10분"}
+            </span>
           </div>
-          <Dropzone file={file} disabled={disabled} onChange={setFile} />
+
+          <ModeTabs mode={mode} disabled={disabled} onChange={setMode} />
+
+          <div className="mt-4">
+            {mode === "file" ? (
+              <Dropzone file={file} disabled={disabled} onChange={setFile} />
+            ) : (
+              <UrlInput
+                value={url}
+                disabled={disabled}
+                invalid={url.length > 0 && !urlValid}
+                onChange={setUrl}
+              />
+            )}
+          </div>
         </div>
 
         {/* Submit */}
@@ -86,7 +148,7 @@ export function IdleForm({ disabled, onSubmit }: Props) {
           <button
             type="button"
             disabled={!ready}
-            onClick={() => file && onSubmit(file, category)}
+            onClick={handleSubmit}
             className={`inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-medium transition-[background,border-color,transform] duration-150 ease-out active:translate-y-[1px] ${
               ready
                 ? "border-accent bg-accent text-white hover:border-accent-strong hover:bg-accent-strong"
@@ -110,12 +172,102 @@ export function IdleForm({ disabled, onSubmit }: Props) {
                 <span className="text-accent">●</span> 준비 완료 — 분석을 시작할 수
                 있습니다.
               </>
-            ) : (
+            ) : mode === "file" ? (
               "파일을 업로드하면 활성화됩니다."
+            ) : (
+              "유튜브 URL을 입력하면 활성화됩니다."
             )}
           </span>
         </div>
       </div>
     </section>
+  );
+}
+
+function ModeTabs({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: InputMode;
+  disabled: boolean;
+  onChange: (m: InputMode) => void;
+}) {
+  const tabs: { key: InputMode; label: string }[] = [
+    { key: "file", label: "파일 업로드" },
+    { key: "url", label: "유튜브 URL" },
+  ];
+  return (
+    <div
+      role="tablist"
+      className="inline-flex rounded-md border border-line-2 bg-[#F6F3F1] p-0.5"
+    >
+      {tabs.map((t) => {
+        const active = mode === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            disabled={disabled}
+            onClick={() => onChange(t.key)}
+            className={`rounded-[5px] px-3.5 py-1.5 text-[13px] font-medium transition-[background,color] duration-[120ms] disabled:cursor-not-allowed disabled:opacity-50 ${
+              active
+                ? "bg-surface text-ink shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
+                : "text-ink-3 hover:text-ink"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function UrlInput({
+  value,
+  disabled,
+  invalid,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  invalid: boolean;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <>
+      <input
+        type="url"
+        value={value}
+        disabled={disabled}
+        placeholder="https://www.youtube.com/watch?v=..."
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full rounded-md border bg-surface px-3.5 py-3 text-sm text-ink transition-[border-color,box-shadow] duration-[120ms] placeholder:text-ink-4 focus:outline-none focus:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 ${
+          invalid
+            ? "border-[#EFCBB9] focus:border-danger focus:ring-[#FBEAE3]"
+            : "border-line-2 hover:border-ink-3 focus:border-accent focus:ring-accent-tint"
+        }`}
+      />
+      {invalid && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.4" />
+            <path
+              d="M7 4V7.5M7 9.5V10"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
+          <span>youtube.com 또는 youtu.be URL만 지원합니다.</span>
+        </div>
+      )}
+      <p className="mt-2.5 text-[12.5px] leading-[1.7] text-ink-4">
+        최대 10분 · youtube.com / youtu.be 링크
+      </p>
+    </>
   );
 }
