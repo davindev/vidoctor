@@ -31,6 +31,7 @@ import whisperx
 from silero_vad import get_speech_timestamps, load_silero_vad
 
 from vidoctor.graph.state import Category, DeadZoneEvent
+from vidoctor.vision._capture import open_capture
 
 _log = logging.getLogger(__name__)
 
@@ -120,11 +121,7 @@ def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
 
     Farneback dense flow → 픽셀별 (dx, dy) 벡터 → magnitude → 프레임 안 max.
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-
-    try:
+    with open_capture(video_path) as cap:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps if fps > 0 else 0.0
@@ -171,8 +168,6 @@ def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
 
             prev_gray = gray
             frame_idx += 1
-    finally:
-        cap.release()
 
     return (
         np.asarray(curr_times, dtype=np.float64),
@@ -208,15 +203,21 @@ def _load_audio_or_empty(video_path: str) -> np.ndarray:
 async def detect_dead_zone_events(
     video_path: str,
     category: Category,
+    *,
+    audio: np.ndarray | None = None,
 ) -> list[DeadZoneEvent]:
     """영상 + 카테고리 → dead zone 이벤트 리스트.
 
-    flow_series(OpenCV)와 audio 로드(ffmpeg subprocess)는 같은 파일을 다른 디코더로
-    읽고 서로 데이터 의존성이 없어 두 스레드로 동시 실행. CPU/IO 분리로 영상당 수 초 절감.
+    `audio`가 주어지면 (그래프에서 transcribe 노드가 푸시한 16kHz mono) ffmpeg 재호출 없이
+    재사용. 없으면 fallback으로 직접 로드. flow_series(OpenCV)는 audio와 무관해 항상
+    별도 스레드로 병렬.
     """
     flow_task = asyncio.to_thread(_flow_series, video_path)
-    audio_task = asyncio.to_thread(_load_audio_or_empty, video_path)
-    (curr_times, flows, duration), audio = await asyncio.gather(flow_task, audio_task)
+    if audio is None:
+        audio_task = asyncio.to_thread(_load_audio_or_empty, video_path)
+        (curr_times, flows, duration), audio = await asyncio.gather(flow_task, audio_task)
+    else:
+        curr_times, flows, duration = await flow_task
     silent = _silent_intervals_from_audio(audio, duration)
     cfg = CATEGORY_CONFIG[category]
 

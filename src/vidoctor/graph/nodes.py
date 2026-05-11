@@ -21,8 +21,8 @@ from vidoctor.graph.state import AnalysisState
 async def transcribe(state: AnalysisState) -> dict:
     from vidoctor.audio.transcribe import transcribe_video
 
-    words = await transcribe_video(state["video_path"])
-    return {"transcript": words}
+    words, audio = await transcribe_video(state["video_path"])
+    return {"transcript": words, "audio_16k": audio}
 
 
 async def detect_filler(state: AnalysisState) -> dict:
@@ -57,7 +57,7 @@ async def detect_dead_zone(state: AnalysisState) -> dict:
     from vidoctor.vision.dead_zone import detect_dead_zone_events
 
     events = await detect_dead_zone_events(
-        state["video_path"], state["category"]
+        state["video_path"], state["category"], audio=state.get("audio_16k")
     )
     return {"dead_zones": events}
 

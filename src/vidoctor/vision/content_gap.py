@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 
 import cv2
@@ -29,6 +28,7 @@ from vidoctor.llm import (
     get_chat_model,
     invoke_structured_with_metrics,
 )
+from vidoctor.vision._capture import encode_frame_jpeg, open_capture
 
 _MODEL = "gpt-4o"
 
@@ -135,29 +135,18 @@ def _transcript_around(transcript: list[Word], time_sec: float) -> str:
     return text
 
 
-def _encode_frame_jpeg(frame) -> str:
-    """BGR ndarray → JPEG → base64."""
-    h = frame.shape[0]
-    if h > MAX_FRAME_HEIGHT:
-        scale = MAX_FRAME_HEIGHT / h
-        frame = cv2.resize(frame, (int(frame.shape[1] * scale), MAX_FRAME_HEIGHT))
-    ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-    if not ok:
-        raise RuntimeError("프레임 JPEG 인코딩 실패")
-    return base64.b64encode(bytes(buffer)).decode("ascii")
-
-
 def _detect_scene_cuts(video_path: str) -> list[float]:
     """PySceneDetect로 영상 컷 경계 시각 리스트 추출.
 
-    각 씬의 시작 시각을 반환 (첫 씬의 0초는 제외). frame_skip=2로 디코딩 비용 절반.
+    각 씬의 시작 시각을 반환 (첫 씬의 0초는 제외). frame_skip=5로 디코딩 비용 ~80% 절감 —
+    SCENE_DEDUP_THRESHOLD_SEC=5s가 컷 시각 ±1초 변동을 흡수하므로 정확도 손실 거의 없음.
     검출 실패 시 빈 리스트 (검출은 옵션, 균등 샘플링은 항상 동작).
     """
     try:
         video = open_video(video_path)
         manager = SceneManager()
         manager.add_detector(ContentDetector())
-        manager.detect_scenes(video=video, frame_skip=2, show_progress=False)
+        manager.detect_scenes(video=video, frame_skip=5, show_progress=False)
         scenes = manager.get_scene_list()
     except (OSError, ValueError, RuntimeError):
         return []
@@ -200,10 +189,7 @@ def _sample_frames(
     POS_MSEC seek는 GOP 키프레임 경계로 스냅될 수 있어 요청한 t와 실제 디코딩 시각이
     어긋날 수 있음 → cap.get으로 실제 시각을 받아 transcript 윈도우와 정렬.
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-    try:
+    with open_capture(video_path) as cap:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps
@@ -222,13 +208,13 @@ def _sample_frames(
             samples.append(
                 _FrameSample(
                     time_sec=actual_t,
-                    image_b64=_encode_frame_jpeg(frame),
+                    image_b64=encode_frame_jpeg(
+                        frame, max_height=MAX_FRAME_HEIGHT, quality=JPEG_QUALITY
+                    ),
                     transcript_text=_transcript_around(transcript, actual_t),
                 )
             )
         return samples
-    finally:
-        cap.release()
 
 
 def _build_message(samples: list[_FrameSample], rubric: str) -> HumanMessage:

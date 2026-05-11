@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from vidoctor.vision.gaze import (
+    _DEFAULT_CONFIG,
     _MODEL_POINTS,
     PITCH_THRESHOLD_DEG,
     YAW_THRESHOLD_DEG,
@@ -27,6 +28,9 @@ from vidoctor.vision.gaze import (
     _subtract_baseline,
     detect_gaze_events,
 )
+
+# 단위 테스트는 기본 임계를 사용 — production 호출 경로와 동일.
+_CFG = _DEFAULT_CONFIG
 
 # ---------------------------------------------------------------------------
 # _normalize_pose_angle
@@ -55,24 +59,27 @@ def test_normalize_pose_angle(raw: float, expected: float):
 
 
 def test_label_direction_front_when_within_threshold():
-    assert _label_direction(0.0, 0.0) == "front"
-    assert _label_direction(YAW_THRESHOLD_DEG - 1, PITCH_THRESHOLD_DEG - 1) == "front"
+    assert _label_direction(0.0, 0.0, _CFG) == "front"
+    assert _label_direction(YAW_THRESHOLD_DEG - 1, PITCH_THRESHOLD_DEG - 1, _CFG) == "front"
 
 
 def test_label_direction_horizontal_only():
-    assert _label_direction(YAW_THRESHOLD_DEG + 5, 0.0) == "right"
-    assert _label_direction(-(YAW_THRESHOLD_DEG + 5), 0.0) == "left"
+    assert _label_direction(YAW_THRESHOLD_DEG + 5, 0.0, _CFG) == "right"
+    assert _label_direction(-(YAW_THRESHOLD_DEG + 5), 0.0, _CFG) == "left"
 
 
 def test_label_direction_vertical_only():
-    assert _label_direction(0.0, PITCH_THRESHOLD_DEG + 5) == "down"
-    assert _label_direction(0.0, -(PITCH_THRESHOLD_DEG + 5)) == "up"
+    assert _label_direction(0.0, PITCH_THRESHOLD_DEG + 5, _CFG) == "down"
+    assert _label_direction(0.0, -(PITCH_THRESHOLD_DEG + 5), _CFG) == "up"
 
 
 def test_label_direction_diagonal_combines():
     # 노트북 응시 = right_down 또는 left_down 패턴 — 두 축 모두 표기.
-    assert _label_direction(YAW_THRESHOLD_DEG + 5, PITCH_THRESHOLD_DEG + 5) == "right_down"
-    assert _label_direction(-(YAW_THRESHOLD_DEG + 5), -(PITCH_THRESHOLD_DEG + 5)) == "left_up"
+    assert _label_direction(YAW_THRESHOLD_DEG + 5, PITCH_THRESHOLD_DEG + 5, _CFG) == "right_down"
+    assert (
+        _label_direction(-(YAW_THRESHOLD_DEG + 5), -(PITCH_THRESHOLD_DEG + 5), _CFG)
+        == "left_up"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +108,12 @@ def _off_down(t: float) -> _PoseSample:
 
 
 def test_is_off_within_threshold_returns_false():
-    assert _is_off(_front(0.0)) is False
+    assert _is_off(_front(0.0), _CFG) is False
 
 
 def test_is_off_yaw_or_pitch_exceeds_threshold():
-    assert _is_off(_off_right(0.0)) is True
-    assert _is_off(_off_down(0.0)) is True
+    assert _is_off(_off_right(0.0), _CFG) is True
+    assert _is_off(_off_down(0.0), _CFG) is True
 
 
 def test_samples_empty():

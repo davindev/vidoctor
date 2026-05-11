@@ -41,7 +41,7 @@ def korean_sample_audio(tmp_path: Path) -> Path:
 
 @pytest.mark.skipif(not INTEGRATION_ENABLED, reason="VIDOCTOR_RUN_INTEGRATION=1 필요")
 async def test_transcribe_korean_sample(korean_sample_audio: Path):
-    words = await transcribe_video(str(korean_sample_audio))
+    words, _ = await transcribe_video(str(korean_sample_audio))
 
     assert len(words) > 0, "단어가 하나도 추출되지 않음"
     assert any("안녕" in w.text for w in words), "'안녕'이 포함된 단어 없음"

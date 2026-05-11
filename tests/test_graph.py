@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from vidoctor.graph import build_graph
@@ -18,9 +19,9 @@ def _stub_heavy_nodes(monkeypatch):
     """
 
     async def _empty_words(_path: str):
-        return []
+        return [], np.array([], dtype=np.float32)
 
-    async def _empty_dead_zone(_path: str, _category):
+    async def _empty_dead_zone(_path: str, _category, *, audio=None):
         return []
 
     async def _empty_content_gap(_path: str, _transcript, _category):

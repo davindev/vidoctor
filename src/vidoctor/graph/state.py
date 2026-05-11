@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from operator import add
 from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast
 
+import numpy as np
 from pydantic import BaseModel
 
 from vidoctor.llm import LLMCallMetrics
@@ -111,6 +112,10 @@ class AnalysisState(TypedDict):
     category: Category
 
     transcript: NotRequired[list[Word]]
+
+    # WhisperX가 디코딩한 16kHz mono 신호를 dead_zone(VAD) 재사용. transcribe 한 번이면
+    # ffmpeg를 또 부르지 않는다. ndarray라 LangGraph checkpoint 직렬화 안 함 — 메모리만.
+    audio_16k: NotRequired[np.ndarray]
 
     fillers: NotRequired[list[FillerEvent]]
     cps_anomalies: NotRequired[list[CPSEvent]]

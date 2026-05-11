@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 
 import cv2
@@ -24,6 +23,7 @@ from vidoctor.llm import (
     get_chat_model,
     invoke_structured_with_metrics,
 )
+from vidoctor.vision._capture import encode_frame_jpeg, open_capture
 
 _log = logging.getLogger(__name__)
 
@@ -47,23 +47,9 @@ class _CategoryDecision(BaseModel):
     )
 
 
-def _encode(frame: cv2.typing.MatLike) -> str:
-    h = frame.shape[0]
-    if h > _MAX_FRAME_HEIGHT:
-        scale = _MAX_FRAME_HEIGHT / h
-        frame = cv2.resize(frame, (int(frame.shape[1] * scale), _MAX_FRAME_HEIGHT))
-    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
-    if not ok:
-        raise RuntimeError("프레임 JPEG 인코딩 실패")
-    return base64.b64encode(bytes(buf)).decode("ascii")
-
-
 def _extract_frames_sync(video_path: str) -> list[str]:
     """3개 분위 시각에서 프레임 추출 → base64 jpg 리스트. 실패 프레임은 skip."""
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-    try:
+    with open_capture(video_path) as cap:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps if fps > 0 else 0.0
@@ -75,10 +61,10 @@ def _extract_frames_sync(video_path: str) -> list[str]:
             ret, frame = cap.read()
             if not ret:
                 continue
-            images.append(_encode(frame))
+            images.append(
+                encode_frame_jpeg(frame, max_height=_MAX_FRAME_HEIGHT, quality=_JPEG_QUALITY)
+            )
         return images
-    finally:
-        cap.release()
 
 
 _PROMPT = """당신은 영상 카테고리 분류기입니다. 아래 영상 프레임들을 보고 카테고리를 \

@@ -47,7 +47,7 @@ def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
         return [Word(**w) for w in data]
 
     print(f"transcribing {video_path.name}...")
-    words = asyncio.run(transcribe_video(str(video_path)))
+    words, _ = asyncio.run(transcribe_video(str(video_path)))
     cache.write_text(
         json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
     )

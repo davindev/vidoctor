@@ -36,6 +36,7 @@ from vidoctor.vision.gaze import (  # noqa: E402
     PITCH_THRESHOLD_DEG,
     SAMPLE_FPS,
     YAW_THRESHOLD_DEG,
+    GazeConfig,
     _PoseSample,
     _sample_video_pose,
     _samples_to_events,
@@ -89,32 +90,14 @@ def _detect_with_thresholds(
     min_duration: float,
     merge_gap: float,
 ) -> list:
-    """vision.gaze 모듈 상수를 임시로 덮어쓰고 _samples_to_events 호출.
-
-    _samples_to_events는 모듈 상수를 직접 참조하므로 임계 sweep 시 모듈 globals를 수정해야
-    한다. 평가 후 원복.
-    """
-    import vidoctor.vision.gaze as gaze_mod
-
-    saved = (
-        gaze_mod.YAW_THRESHOLD_DEG,
-        gaze_mod.PITCH_THRESHOLD_DEG,
-        gaze_mod.MIN_DURATION_SEC,
-        gaze_mod.MERGE_GAP_SEC,
+    """sweep 임계로 _samples_to_events 호출 — GazeConfig 키워드로 주입."""
+    cfg = GazeConfig(
+        yaw_threshold_deg=yaw_thr,
+        pitch_threshold_deg=pitch_thr,
+        min_duration_sec=min_duration,
+        merge_gap_sec=merge_gap,
     )
-    gaze_mod.YAW_THRESHOLD_DEG = yaw_thr
-    gaze_mod.PITCH_THRESHOLD_DEG = pitch_thr
-    gaze_mod.MIN_DURATION_SEC = min_duration
-    gaze_mod.MERGE_GAP_SEC = merge_gap
-    try:
-        return _samples_to_events(samples)
-    finally:
-        (
-            gaze_mod.YAW_THRESHOLD_DEG,
-            gaze_mod.PITCH_THRESHOLD_DEG,
-            gaze_mod.MIN_DURATION_SEC,
-            gaze_mod.MERGE_GAP_SEC,
-        ) = saved
+    return _samples_to_events(samples, cfg)
 
 
 def _label_diagnostics(

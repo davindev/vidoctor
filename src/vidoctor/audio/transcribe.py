@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import whisperx
 
 from vidoctor.graph.state import Word
@@ -50,7 +51,7 @@ def _load_models() -> _LoadedModels:
     return _LoadedModels(asr=asr, align_model=align_model, align_metadata=align_metadata)
 
 
-def _transcribe_sync(media_path: str) -> list[Word]:
+def _transcribe_sync(media_path: str) -> tuple[list[Word], np.ndarray]:
     if not Path(media_path).exists():
         raise FileNotFoundError(f"미디어 파일 없음: {media_path}")
 
@@ -84,12 +85,13 @@ def _transcribe_sync(media_path: str) -> list[Word]:
                     score=float(score) if score is not None else None,
                 )
             )
-    return words
+    return words, audio
 
 
-async def transcribe_video(media_path: str) -> list[Word]:
-    """영상/오디오 파일 → 단어 단위 transcript.
+async def transcribe_video(media_path: str) -> tuple[list[Word], np.ndarray]:
+    """영상/오디오 파일 → (단어 단위 transcript, 16kHz mono ndarray).
 
-    WhisperX 호출은 sync·CPU bound이라 to_thread로 분리해 LangGraph 이벤트 루프 차단 방지.
+    audio는 WhisperX가 이미 디코딩한 16kHz mono float32라 dead_zone VAD가 재사용 → ffmpeg
+    호출 1회 절감. WhisperX 호출은 sync·CPU bound이라 to_thread로 이벤트 루프 차단 방지.
     """
     return await asyncio.to_thread(_transcribe_sync, media_path)

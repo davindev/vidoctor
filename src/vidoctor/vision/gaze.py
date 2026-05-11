@@ -35,6 +35,7 @@ import numpy as np
 
 from vidoctor.config import ROOT
 from vidoctor.graph.state import Direction, GazeEvent
+from vidoctor.vision._capture import open_capture
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -92,6 +93,20 @@ MIN_DURATION_SEC = 0.6
 # 구간으로 묶고 detector는 frame 단위라 단위 mismatch가 IoU를 깎는다. 1.0s까지 묶으면
 # 4초 라벨 안 짧은 이탈 여러 개가 한 이벤트로 합쳐져 매칭 안정.
 MERGE_GAP_SEC = 1.0
+
+
+@dataclass(frozen=True)
+class GazeConfig:
+    """gaze 검출 임계 묶음. eval sweep이 모듈 globals를 mutate하던 hack을 대체 — 임계는
+    이 객체로 전달해 _samples_to_events / _is_off가 순수 함수가 된다."""
+
+    yaw_threshold_deg: float = YAW_THRESHOLD_DEG
+    pitch_threshold_deg: float = PITCH_THRESHOLD_DEG
+    min_duration_sec: float = MIN_DURATION_SEC
+    merge_gap_sec: float = MERGE_GAP_SEC
+
+
+_DEFAULT_CONFIG = GazeConfig()
 
 # 자동 ROI 추정 파라미터. 강의 화자 위치는 거의 고정이라 첫 5초 내 BlazeFace 검출 결과만으로
 # 안정 ROI 결정 가능. 머리 회전 시 얼굴이 ROI 밖으로 나가지 않도록 detected bbox의 1.6배로 확장.
@@ -217,18 +232,20 @@ def _normalize_pose_angle(deg: float) -> float:
     return deg
 
 
-def _label_direction(yaw: float, pitch: float) -> Direction:
-    h = 1 if yaw > YAW_THRESHOLD_DEG else -1 if yaw < -YAW_THRESHOLD_DEG else 0
-    v = 1 if pitch > PITCH_THRESHOLD_DEG else -1 if pitch < -PITCH_THRESHOLD_DEG else 0
+def _label_direction(yaw: float, pitch: float, cfg: GazeConfig) -> Direction:
+    h = 1 if yaw > cfg.yaw_threshold_deg else -1 if yaw < -cfg.yaw_threshold_deg else 0
+    v = 1 if pitch > cfg.pitch_threshold_deg else -1 if pitch < -cfg.pitch_threshold_deg else 0
     return _DIRECTIONS[(h, v)]
 
 
-def _is_off(sample: _PoseSample) -> bool:
-    return abs(sample.yaw) > YAW_THRESHOLD_DEG or abs(sample.pitch) > PITCH_THRESHOLD_DEG
+def _is_off(sample: _PoseSample, cfg: GazeConfig) -> bool:
+    return abs(sample.yaw) > cfg.yaw_threshold_deg or abs(sample.pitch) > cfg.pitch_threshold_deg
 
 
-def _samples_to_events(samples: list[_PoseSample]) -> list[GazeEvent]:
-    """is_off 연속 구간을 GazeEvent로 묶음. 짧은 정면 복귀는 MERGE_GAP_SEC까지 같은 이벤트."""
+def _samples_to_events(
+    samples: list[_PoseSample], cfg: GazeConfig = _DEFAULT_CONFIG
+) -> list[GazeEvent]:
+    """is_off 연속 구간을 GazeEvent로 묶음. 짧은 정면 복귀는 cfg.merge_gap_sec까지 같은 이벤트."""
     events: list[GazeEvent] = []
     cur_start: float | None = None
     cur_end = 0.0
@@ -240,18 +257,18 @@ def _samples_to_events(samples: list[_PoseSample]) -> list[GazeEvent]:
         if cur_start is None:
             return
         duration = cur_end - cur_start
-        if duration >= MIN_DURATION_SEC:
+        if duration >= cfg.min_duration_sec:
             events.append(GazeEvent(start=cur_start, end=cur_end, direction=cur_dir))
         cur_start = None
 
     for sample in samples:
-        if _is_off(sample):
+        if _is_off(sample, cfg):
             if cur_start is None:
                 cur_start = sample.t
-                cur_dir = _label_direction(sample.yaw, sample.pitch)
+                cur_dir = _label_direction(sample.yaw, sample.pitch, cfg)
             cur_end = sample.t
             last_off_t = sample.t
-        elif cur_start is not None and (sample.t - last_off_t) > MERGE_GAP_SEC:
+        elif cur_start is not None and (sample.t - last_off_t) > cfg.merge_gap_sec:
             flush()
 
     flush()
@@ -358,12 +375,8 @@ def _detect_webcam_roi(video_path: str) -> _ROI | None:
 
     None 반환 = 4코너 폴백까지 모두 실패 (영상에 화자 얼굴이 없거나 비표준 위치).
     """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-
     frames: list[np.ndarray] = []
-    try:
+    with open_capture(video_path) as cap:
         meta = _read_video_meta(cap)
         max_frames = min(int(ROI_DETECTION_WINDOW_SEC * meta.fps), meta.total_frames)
         for frame_idx in range(max_frames):
@@ -375,8 +388,6 @@ def _detect_webcam_roi(video_path: str) -> _ROI | None:
             if not ok:
                 break
             frames.append(frame)
-    finally:
-        cap.release()
 
     if not frames:
         return None
@@ -401,12 +412,8 @@ def _sample_video_pose(video_path: str) -> list[_PoseSample]:
     from mediapipe.tasks import python as mp_tasks
     from mediapipe.tasks.python import vision as mp_vision
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"미디어 파일 열기 실패: {video_path}")
-
     samples: list[_PoseSample] = []
-    try:
+    with open_capture(video_path) as cap:
         meta = _read_video_meta(cap)
         cam_w, cam_h = roi.w, roi.h
 
@@ -454,8 +461,6 @@ def _sample_video_pose(video_path: str) -> list[_PoseSample]:
 
                 yaw, pitch = pose
                 samples.append(_PoseSample(t=t, yaw=yaw, pitch=pitch))
-    finally:
-        cap.release()
 
     return samples
 
