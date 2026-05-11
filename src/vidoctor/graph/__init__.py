@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any, cast
 
 from vidoctor.graph.pipeline import build_graph
@@ -13,6 +14,12 @@ from vidoctor.graph.state import (
     Suggestion,
     Word,
 )
+
+
+# 그래프 구조는 불변 — 영상마다 재컴파일하지 않는다 (수십 ms 절감).
+@lru_cache(maxsize=1)
+def _compiled_graph() -> Any:
+    return build_graph()
 
 
 async def run_analysis(
@@ -31,7 +38,7 @@ async def run_analysis(
     같이 회수 — `ainvoke` 별도 호출로 두 번 돌리는 비용 회피. 콜백이 없으면 values만
     구독해 update yield 비용도 절약.
     """
-    g = build_graph()
+    g = _compiled_graph()
     initial: dict[str, Any] = {"video_path": video_path, "category": category}
     final_state: dict[str, Any] | None = None
     stream_modes = ["updates", "values"] if on_node_complete else ["values"]

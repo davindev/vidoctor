@@ -16,9 +16,7 @@
 from __future__ import annotations
 
 import base64
-import time
 from dataclasses import dataclass
-from typing import cast
 
 import cv2
 from langchain_core.messages import HumanMessage
@@ -28,9 +26,8 @@ from scenedetect import ContentDetector, SceneManager, open_video
 from vidoctor.graph.state import Category, ContentGapEvent, Word
 from vidoctor.llm import (
     LLMCallMetrics,
-    estimate_cost_usd,
-    extract_token_usage,
     get_chat_model,
+    invoke_structured_with_metrics,
 )
 
 _MODEL = "gpt-4o"
@@ -338,40 +335,15 @@ async def detect_content_gap_events(
     LLMCallMetrics는 영상당 총 비용·latency 누적용으로 graph 노드가 state에 push.
     """
     samples = _sample_frames(video_path, transcript)
-    empty_metrics = LLMCallMetrics(
-        step="content_gap",
-        model=_MODEL,
-        cost_usd=0.0,
-        latency_sec=0.0,
-        prompt_tokens=0,
-        completion_tokens=0,
-    )
     if not samples:
-        return [], empty_metrics
+        return [], LLMCallMetrics.empty("content_gap", _MODEL)
     message = _build_message(samples, _RUBRICS[category])
 
     # max_tokens=1024: issues 5건 × ~200자로 충분. structured output length limit
     # 도달로 인한 파싱 실패 차단.
     model = get_chat_model(model=_MODEL, temperature=0.0, max_tokens=1024)
-    structured = model.with_structured_output(_ContentGapResponse, include_raw=True)
-
-    t0 = time.perf_counter()
-    result = await structured.ainvoke([message])
-    latency = time.perf_counter() - t0
-
-    raw = result["raw"] if isinstance(result, dict) else None
-    parsed = cast(
-        _ContentGapResponse,
-        result["parsed"] if isinstance(result, dict) else result,
-    )
-    prompt_tok, completion_tok = extract_token_usage(raw)
-    metrics = LLMCallMetrics(
-        step="content_gap",
-        model=_MODEL,
-        cost_usd=estimate_cost_usd(_MODEL, prompt_tok, completion_tok),
-        latency_sec=latency,
-        prompt_tokens=prompt_tok,
-        completion_tokens=completion_tok,
+    parsed, metrics = await invoke_structured_with_metrics(
+        model, _ContentGapResponse, [message], step="content_gap"
     )
 
     events: list[ContentGapEvent] = []

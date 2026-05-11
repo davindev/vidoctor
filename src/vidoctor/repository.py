@@ -13,6 +13,7 @@ JSONB로 직렬화·역직렬화한다.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -229,7 +230,7 @@ def save_suggestions(analysis_id: str, suggestions: list[Suggestion]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def complete_analysis(
+async def complete_analysis(
     analysis_id: str,
     video_id: str,
     state: AnalysisState,
@@ -239,12 +240,10 @@ def complete_analysis(
     """성공 종료: findings·suggestions 저장 + cost·step 메타 + analyses.finished_at +
     videos.status='completed'.
 
+    4개 Supabase 호출은 모두 독립적이라 asyncio.gather로 동시 실행 (영상당 ~1초 절감).
     cost·latency는 state.step_metrics(LLM 노드들이 누적)에서 합산해 cost_usd로 저장하고,
     step별 분리 정보는 metadata.step_metrics JSON으로 보존 — UI가 분석 카드에 표시.
     """
-    save_findings(analysis_id, state)
-    save_suggestions(analysis_id, state.get("suggestions", []) or [])
-
     step_metrics = state.get("step_metrics", []) or []
     total_cost = sum(m.cost_usd for m in step_metrics)
     merged_metadata: dict[str, Any] = dict(metadata or {})
@@ -261,12 +260,17 @@ def complete_analysis(
             for m in step_metrics
         ]
 
-    finalize_analysis(
-        analysis_id,
-        cost_usd=total_cost if step_metrics else None,
-        metadata=merged_metadata or None,
+    await asyncio.gather(
+        asyncio.to_thread(save_findings, analysis_id, state),
+        asyncio.to_thread(save_suggestions, analysis_id, state.get("suggestions", []) or []),
+        asyncio.to_thread(
+            finalize_analysis,
+            analysis_id,
+            cost_usd=total_cost if step_metrics else None,
+            metadata=merged_metadata or None,
+        ),
+        asyncio.to_thread(update_video_status, video_id, "completed"),
     )
-    update_video_status(video_id, "completed")
 
 
 def fail_analysis(analysis_id: str, video_id: str, error: str) -> None:

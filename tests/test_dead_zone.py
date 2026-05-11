@@ -11,12 +11,11 @@ import pytest
 from tests._helpers import write_video
 from vidoctor.graph.state import Category
 from vidoctor.vision.dead_zone import (
-    _detect_dead_zone_sync,
     _flow_median_in,
     _Interval,
     _silent_intervals_from_audio,
+    detect_dead_zone_events,
 )
-
 
 # ---------------------------------------------------------------------------
 # _silent_intervals_from_audio (Silero VAD wrapper)
@@ -58,7 +57,7 @@ def test_flow_median_in_no_samples_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# 합성 영상 통합 — _detect_dead_zone_sync
+# 합성 영상 통합 — detect_dead_zone_events
 # ---------------------------------------------------------------------------
 
 
@@ -85,24 +84,24 @@ def synthetic_video(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("category", ["lecture", "vlog", "other"])
-def test_detect_finds_static_with_silent_audio(synthetic_video: Path, category: Category):
+async def test_detect_finds_static_with_silent_audio(synthetic_video: Path, category: Category):
     # 합성 영상 무성 → 영상 전체 무발화. 정적 부분 flow median ≈ 0 → 통과.
-    events = _detect_dead_zone_sync(str(synthetic_video), category)
+    events = await detect_dead_zone_events(str(synthetic_video), category)
     assert len(events) >= 1
 
 
-def test_detect_noisy_video_blocked_by_flow_gate(tmp_path: Path):
+async def test_detect_noisy_video_blocked_by_flow_gate(tmp_path: Path):
     # 영상 전체 noise (정적 구간 없음) → flow median 큼 → 차단.
     video = tmp_path / "noisy.mp4"
     _make_test_video(video, duration_sec=10.0, static_from=999.0)
-    events = _detect_dead_zone_sync(str(video), "vlog")
+    events = await detect_dead_zone_events(str(video), "vlog")
     assert events == []
 
 
 @pytest.mark.parametrize("category", ["lecture", "vlog", "other"])
-def test_detect_short_video_below_min_duration(tmp_path: Path, category: Category):
+async def test_detect_short_video_below_min_duration(tmp_path: Path, category: Category):
     # 영상 4s — min_duration 5s 미만이라 어떤 카테고리도 검출 안 함.
     video = tmp_path / "short.mp4"
     _make_test_video(video, duration_sec=4.0, static_from=0.0)
-    events = _detect_dead_zone_sync(str(video), category)
+    events = await detect_dead_zone_events(str(video), category)
     assert events == []

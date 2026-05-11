@@ -29,13 +29,12 @@ from pydantic import BaseModel
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
 from vidoctor.graph import Category, run_analysis
-from vidoctor.llm import LLMCallMetrics
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
     DIM_TO_STATE_FIELD,
     AnalysisState,
 )
-from vidoctor.vision.category_classifier import classify_category
+from vidoctor.llm import LLMCallMetrics
 from vidoctor.repository import (
     complete_analysis,
     create_video_signed_url,
@@ -51,6 +50,7 @@ from vidoctor.repository import (
     list_analyses,
     upload_video_file,
 )
+from vidoctor.vision.category_classifier import classify_category
 
 _log = logging.getLogger(__name__)
 
@@ -340,7 +340,7 @@ async def _analyze_stream(
             existing = graph_state.get("step_metrics") or []
             graph_state["step_metrics"] = [*existing, classify_metrics]
 
-        await asyncio.to_thread(complete_analysis, analysis_id, video_id, graph_state)
+        await complete_analysis(analysis_id, video_id, graph_state)
         yield _sse("complete", {"analysis_id": analysis_id})
 
     except (asyncio.CancelledError, GeneratorExit):

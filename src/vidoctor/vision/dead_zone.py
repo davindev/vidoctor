@@ -205,12 +205,18 @@ def _load_audio_or_empty(video_path: str) -> np.ndarray:
         raise
 
 
-def _detect_dead_zone_sync(
+async def detect_dead_zone_events(
     video_path: str,
     category: Category,
 ) -> list[DeadZoneEvent]:
-    curr_times, flows, duration = _flow_series(video_path)
-    audio = _load_audio_or_empty(video_path)
+    """영상 + 카테고리 → dead zone 이벤트 리스트.
+
+    flow_series(OpenCV)와 audio 로드(ffmpeg subprocess)는 같은 파일을 다른 디코더로
+    읽고 서로 데이터 의존성이 없어 두 스레드로 동시 실행. CPU/IO 분리로 영상당 수 초 절감.
+    """
+    flow_task = asyncio.to_thread(_flow_series, video_path)
+    audio_task = asyncio.to_thread(_load_audio_or_empty, video_path)
+    (curr_times, flows, duration), audio = await asyncio.gather(flow_task, audio_task)
     silent = _silent_intervals_from_audio(audio, duration)
     cfg = CATEGORY_CONFIG[category]
 
@@ -223,14 +229,3 @@ def _detect_dead_zone_sync(
             continue
         events.append(DeadZoneEvent(start=iv.start, end=iv.end))
     return events
-
-
-async def detect_dead_zone_events(
-    video_path: str,
-    category: Category,
-) -> list[DeadZoneEvent]:
-    """영상 + 카테고리 → dead zone 이벤트 리스트.
-
-    OpenCV·flow·VAD 처리는 sync·CPU bound이라 to_thread로 분리해 이벤트 루프 차단 방지.
-    """
-    return await asyncio.to_thread(_detect_dead_zone_sync, video_path, category)
