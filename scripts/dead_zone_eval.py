@@ -20,13 +20,12 @@ import json
 import sys
 from pathlib import Path
 
-import mlflow
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vidoctor.config import get_settings  # noqa: E402
+from vidoctor.eval._script_lib import log_mlflow_run  # noqa: E402
 from vidoctor.eval.labels import load_labels  # noqa: E402
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics  # noqa: E402
 from vidoctor.graph.state import Category  # noqa: E402
@@ -208,14 +207,7 @@ def main() -> None:
     }
 
     if not args.no_mlflow:
-        settings = get_settings()
-        if settings.mlflow_tracking_uri:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-        mlflow.set_experiment(_EXPERIMENT_NAME)
-        with mlflow.start_run(run_name=args.run_name):
-            mlflow.log_params(params)
-            mlflow.log_metrics(metrics)
-        print(f"  → mlflow run logged ({_EXPERIMENT_NAME} / {args.run_name})")
+        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
     out = (
         ROOT

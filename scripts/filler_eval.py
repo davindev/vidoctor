@@ -14,23 +14,17 @@ transcript는 영상별 JSON에 캐시되어 사전 튜닝 반복 시 transcribe
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
-import os
 import sys
 from pathlib import Path
-
-import mlflow
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from vidoctor.audio.filler import detect_filler_events  # noqa: E402
-from vidoctor.audio.transcribe import transcribe_video  # noqa: E402
-from vidoctor.config import get_settings  # noqa: E402
+from vidoctor.eval._script_lib import load_or_transcribe, log_mlflow_run  # noqa: E402
 from vidoctor.eval.labels import load_labels  # noqa: E402
 from vidoctor.eval.metrics import compute_filler_metrics  # noqa: E402
-from vidoctor.graph.state import Word  # noqa: E402
 
 _EXPERIMENT_NAME = "vidoctor-filler"
 
@@ -46,37 +40,6 @@ def _metrics_dict(label_intervals, events) -> dict[str, float]:
         "recall": m.recall,
         "f1": m.f1,
     }
-
-
-def _model_tag() -> str:
-    """VIDOCTOR_WHISPER_MODEL 값에서 cache 키로 쓸 짧은 식별자 추출.
-
-    환경변수 미설정이면 "default", 경로면 basename, HF id면 마지막 segment.
-    """
-    model = os.environ.get("VIDOCTOR_WHISPER_MODEL")
-    if not model:
-        return "default"
-    return Path(model).name.replace("/", "_") or "default"
-
-
-def _transcript_cache_path(video_path: Path) -> Path:
-    return ROOT / "data" / "golden" / f"transcript_{video_path.stem}_{_model_tag()}.json"
-
-
-def _load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
-    cache = _transcript_cache_path(video_path)
-    if cache.exists() and not no_cache:
-        print(f"loading cached transcript: {cache.name}")
-        data = json.loads(cache.read_text())
-        return [Word(**w) for w in data]
-
-    print(f"transcribing {video_path.name}...")
-    words = asyncio.run(transcribe_video(str(video_path)))
-    cache.write_text(
-        json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
-    )
-    print(f"  → {len(words)} words (cached → {cache.name})")
-    return words
 
 
 def main() -> None:
@@ -101,10 +64,9 @@ def main() -> None:
     if not args.labels_csv.exists():
         sys.exit(f"labels not found: {args.labels_csv}")
 
-    words = _load_or_transcribe(args.video_path, args.no_cache)
+    words = load_or_transcribe(args.video_path, args.no_cache)
 
     events = detect_filler_events(words)
-    detected_starts = [e.start for e in events]
 
     labels = load_labels(args.labels_csv)
     filler_labels = [(lbl.start, lbl.end) for lbl in labels if lbl.dimension == "filler"]
@@ -117,21 +79,17 @@ def main() -> None:
     )
 
     if not args.no_mlflow:
-        settings = get_settings()
-        if settings.mlflow_tracking_uri:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-        mlflow.set_experiment(_EXPERIMENT_NAME)
-        with mlflow.start_run(run_name=args.run_name):
-            mlflow.log_params(
-                {
-                    "video": args.video_path.name,
-                    "label_count": len(filler_labels),
-                    "detected_count": len(events),
-                    "transcript_word_count": len(words),
-                }
-            )
-            mlflow.log_metrics(metrics)
-        print(f"  → mlflow run logged ({_EXPERIMENT_NAME} / {args.run_name})")
+        log_mlflow_run(
+            _EXPERIMENT_NAME,
+            args.run_name,
+            params={
+                "video": args.video_path.name,
+                "label_count": len(filler_labels),
+                "detected_count": len(events),
+                "transcript_word_count": len(words),
+            },
+            metrics=metrics,
+        )
 
     out = ROOT / "data" / "golden" / f"filler_eval_{args.video_path.stem}_{args.run_name}.json"
     out.write_text(

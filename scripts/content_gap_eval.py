@@ -18,19 +18,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 from pathlib import Path
 from typing import cast
 
-import mlflow
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from vidoctor.audio.transcribe import transcribe_video  # noqa: E402
-from vidoctor.config import get_settings  # noqa: E402
+from vidoctor.eval._script_lib import (  # noqa: E402
+    load_or_transcribe,
+    log_mlflow_run,
+)
 from vidoctor.eval.labels import load_labels  # noqa: E402
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics  # noqa: E402
 from vidoctor.graph.state import Category, ContentGapEvent, Word  # noqa: E402
@@ -54,33 +53,6 @@ from vidoctor.vision.content_gap import (  # noqa: E402
 )
 
 _EXPERIMENT_NAME = "vidoctor-content_gap"
-
-
-def _model_tag() -> str:
-    model = os.environ.get("VIDOCTOR_WHISPER_MODEL")
-    if not model:
-        return "default"
-    return Path(model).name.replace("/", "_") or "default"
-
-
-def _transcript_cache_path(video_path: Path) -> Path:
-    return ROOT / "data" / "golden" / f"transcript_{video_path.stem}_{_model_tag()}.json"
-
-
-def _load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
-    cache = _transcript_cache_path(video_path)
-    if cache.exists() and not no_cache:
-        print(f"loading cached transcript: {cache.name}")
-        data = json.loads(cache.read_text())
-        return [Word(**w) for w in data]
-
-    print(f"transcribing {video_path.name}...")
-    words = asyncio.run(transcribe_video(str(video_path)))
-    cache.write_text(
-        json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
-    )
-    print(f"  → {len(words)} words (cached → {cache.name})")
-    return words
 
 
 async def _detect_with_meta(
@@ -196,7 +168,7 @@ def main() -> None:
     if not args.labels_csv.exists():
         sys.exit(f"labels not found: {args.labels_csv}")
 
-    transcript = _load_or_transcribe(args.video_path, args.no_cache)
+    transcript = load_or_transcribe(args.video_path, args.no_cache)
 
     print(f"sampling frames + invoking {args.model}...")
     category = cast(Category, args.category)
@@ -269,14 +241,7 @@ def main() -> None:
     }
 
     if not args.no_mlflow:
-        settings = get_settings()
-        if settings.mlflow_tracking_uri:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-        mlflow.set_experiment(_EXPERIMENT_NAME)
-        with mlflow.start_run(run_name=args.run_name):
-            mlflow.log_params(params)
-            mlflow.log_metrics(metrics)
-        print(f"  → mlflow run logged ({_EXPERIMENT_NAME} / {args.run_name})")
+        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
     out = (
         ROOT

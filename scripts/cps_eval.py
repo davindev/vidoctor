@@ -16,14 +16,10 @@ transcript는 영상별 JSON에 캐시되어 임계 튜닝 반복 시 transcribe
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
-import os
 import statistics
 import sys
 from pathlib import Path
-
-import mlflow
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -46,11 +42,13 @@ from vidoctor.audio.pitch import (  # noqa: E402
     extract_pitch_track,
     window_pitch_features,
 )
-from vidoctor.audio.transcribe import transcribe_video  # noqa: E402
-from vidoctor.config import get_settings  # noqa: E402
+from vidoctor.eval._script_lib import (  # noqa: E402
+    load_or_transcribe,
+    log_mlflow_run,
+    model_tag,
+)
 from vidoctor.eval.labels import load_labels  # noqa: E402
 from vidoctor.eval.metrics import compute_cps_metrics  # noqa: E402
-from vidoctor.graph.state import Word  # noqa: E402
 
 _EXPERIMENT_NAME = "vidoctor-cps"
 
@@ -67,33 +65,6 @@ def _metrics_dict(cps_labels, events) -> dict[str, float]:
         "f1": m.f1,
         "temporal_iou_mean": m.temporal_iou_mean,
     }
-
-
-def _model_tag() -> str:
-    model = os.environ.get("VIDOCTOR_WHISPER_MODEL")
-    if not model:
-        return "default"
-    return Path(model).name.replace("/", "_") or "default"
-
-
-def _transcript_cache_path(video_path: Path) -> Path:
-    return ROOT / "data" / "golden" / f"transcript_{video_path.stem}_{_model_tag()}.json"
-
-
-def _load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
-    cache = _transcript_cache_path(video_path)
-    if cache.exists() and not no_cache:
-        print(f"loading cached transcript: {cache.name}")
-        data = json.loads(cache.read_text())
-        return [Word(**w) for w in data]
-
-    print(f"transcribing {video_path.name}...")
-    words = asyncio.run(transcribe_video(str(video_path)))
-    cache.write_text(
-        json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
-    )
-    print(f"  → {len(words)} words (cached → {cache.name})")
-    return words
 
 
 def _f0_cache_path(video_path: Path) -> Path:
@@ -133,7 +104,7 @@ def main() -> None:
     if not args.labels_csv.exists():
         sys.exit(f"labels not found: {args.labels_csv}")
 
-    words = _load_or_transcribe(args.video_path, args.no_cache)
+    words = load_or_transcribe(args.video_path, args.no_cache)
 
     windows = _sliding_windows(words)
     cps_values = [w.cps for w in windows]
@@ -179,20 +150,13 @@ def main() -> None:
         "video_window_count": len(windows),
         "video_window_mean_cps": round(win_mean, 3),
         "video_window_std_cps": round(win_std, 3),
-        "whisper_model": _model_tag(),
+        "whisper_model": model_tag(),
     }
     if not args.no_pitch:
         params["f0_and_sigma"] = F0_AND_SIGMA
 
     if not args.no_mlflow:
-        settings = get_settings()
-        if settings.mlflow_tracking_uri:
-            mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-        mlflow.set_experiment(_EXPERIMENT_NAME)
-        with mlflow.start_run(run_name=args.run_name):
-            mlflow.log_params(params)
-            mlflow.log_metrics(metrics)
-        print(f"  → mlflow run logged ({_EXPERIMENT_NAME} / {args.run_name})")
+        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
     out = ROOT / "data" / "golden" / f"cps_eval_{args.video_path.stem}_{args.run_name}.json"
     out.write_text(

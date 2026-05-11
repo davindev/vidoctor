@@ -1,0 +1,72 @@
+"""평가 스크립트 공용 유틸 — transcript cache + MLflow 셋업.
+
+`scripts/{filler,cps,content_gap}_eval.py`가 모두 똑같이 복사해 쓰던 헬퍼 3종(`_model_tag`,
+`_transcript_cache_path`, `_load_or_transcribe`) + 5개 스크립트가 반복하던 MLflow 셋업
+boilerplate를 한 곳에 모은다. 평가 결과 dump 구조는 차원별 의도가 다르므로 각자 유지.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import mlflow
+
+from vidoctor.audio.transcribe import transcribe_video
+from vidoctor.config import get_settings
+from vidoctor.graph.state import Word
+
+_ROOT = Path(__file__).resolve().parents[3]
+_GOLDEN_DIR = _ROOT / "data" / "golden"
+
+
+def model_tag() -> str:
+    """현재 환경의 WhisperX 모델 식별자 — cache 키로 사용.
+
+    환경변수 미설정이면 "default", 경로면 basename, HF id면 마지막 segment.
+    """
+    model = os.environ.get("VIDOCTOR_WHISPER_MODEL")
+    if not model:
+        return "default"
+    return Path(model).name.replace("/", "_") or "default"
+
+
+def transcript_cache_path(video_path: Path) -> Path:
+    return _GOLDEN_DIR / f"transcript_{video_path.stem}_{model_tag()}.json"
+
+
+def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
+    """캐시된 transcript JSON이 있으면 그걸 로드, 없으면 WhisperX 호출 + 캐시 작성."""
+    cache = transcript_cache_path(video_path)
+    if cache.exists() and not no_cache:
+        print(f"loading cached transcript: {cache.name}")
+        data = json.loads(cache.read_text())
+        return [Word(**w) for w in data]
+
+    print(f"transcribing {video_path.name}...")
+    words = asyncio.run(transcribe_video(str(video_path)))
+    cache.write_text(
+        json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
+    )
+    print(f"  → {len(words)} words (cached → {cache.name})")
+    return words
+
+
+def log_mlflow_run(
+    experiment: str,
+    run_name: str,
+    params: dict[str, Any],
+    metrics: dict[str, float],
+) -> None:
+    """평가 스크립트 5곳에서 반복하던 MLflow 셋업·로그 한 묶음."""
+    settings = get_settings()
+    if settings.mlflow_tracking_uri:
+        mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+    mlflow.set_experiment(experiment)
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_params(params)
+        mlflow.log_metrics(metrics)
+    print(f"  → mlflow run logged ({experiment} / {run_name})")
