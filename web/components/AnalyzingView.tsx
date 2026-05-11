@@ -6,7 +6,7 @@ import { Pipeline } from "./Pipeline";
 import { ResultHeader, ResultPage } from "./ResultHeader";
 
 interface Props {
-  category: Category;
+  category: Category | null;
   filename: string | null;
   phase: AnalyzingPhase;
   completed: Set<string>;

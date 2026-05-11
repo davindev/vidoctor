@@ -3,15 +3,20 @@
  * 표준 EventSource는 GET·동일 origin·credentials만 받아 multipart 업로드와 안 맞음.
  * fetch + ReadableStream 으로 직접 SSE 프레임을 파싱한다 — `event: <name>\ndata: <json>\n\n`. */
 
-import { API_BASE, type Category } from "./api";
+import { API_BASE, type Category, type CategoryChoice } from "./api";
 
-/** 클라이언트 측 진행 단계. 서버는 "downloading" | "uploading"만 보내고, "running"은
- * `uploaded` 이벤트 후 클라이언트가 derive. */
-export type AnalyzingPhase = "downloading" | "uploading" | "running";
+/** 클라이언트 측 진행 단계. 서버는 "downloading" | "classifying" | "uploading"을 보내고,
+ * "running"은 `uploaded` 이벤트 후 클라이언트가 derive. */
+export type AnalyzingPhase =
+  | "downloading"
+  | "classifying"
+  | "uploading"
+  | "running";
 
 export type AnalyzeEvent =
-  | { type: "status"; phase: "downloading" | "uploading" }
+  | { type: "status"; phase: "downloading" | "classifying" | "uploading" }
   | { type: "metadata"; filename: string }
+  | { type: "category"; category: Category }
   | { type: "started"; analysis_id: string }
   | { type: "uploaded" }
   | { type: "node"; name: string }
@@ -25,7 +30,7 @@ export type AnalyzeSource =
 
 export interface AnalyzeOptions {
   source: AnalyzeSource;
-  category: Category;
+  category: CategoryChoice;
   signal?: AbortSignal;
   onEvent: (ev: AnalyzeEvent) => void;
 }

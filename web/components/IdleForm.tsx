@@ -1,15 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { Category } from "@/lib/api";
-import { CATEGORY_LABEL } from "@/lib/api";
+import { CATEGORY_CHOICE_LABEL, type CategoryChoice } from "@/lib/api";
 import type { AnalyzeSource } from "@/lib/sse";
 import { Dropzone } from "./Dropzone";
 
 interface Props {
   disabled: boolean;
   lastError: string | null;
-  onSubmit: (source: AnalyzeSource, category: Category) => void;
+  onSubmit: (source: AnalyzeSource, category: CategoryChoice) => void;
 }
 
 type InputMode = "file" | "url";
@@ -19,7 +18,7 @@ type InputMode = "file" | "url";
 const YT_URL_RE = /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i;
 
 export function IdleForm({ disabled, lastError, onSubmit }: Props) {
-  const [category, setCategory] = useState<Category>("lecture");
+  const [category, setCategory] = useState<CategoryChoice>("auto");
   const [mode, setMode] = useState<InputMode>("file");
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
@@ -89,9 +88,9 @@ export function IdleForm({ disabled, lastError, onSubmit }: Props) {
               className="w-full appearance-none cursor-pointer rounded-md border border-line-2 bg-surface px-3.5 py-3 pr-10 text-sm font-medium text-ink transition-[border-color,box-shadow] duration-[120ms] hover:border-ink-3 focus:border-accent focus:outline-none focus:ring-[3px] focus:ring-accent-tint disabled:cursor-not-allowed disabled:opacity-50"
               value={category}
               disabled={disabled}
-              onChange={(e) => setCategory(e.target.value as Category)}
+              onChange={(e) => setCategory(e.target.value as CategoryChoice)}
             >
-              {Object.entries(CATEGORY_LABEL).map(([k, v]) => (
+              {Object.entries(CATEGORY_CHOICE_LABEL).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>

@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,11 +29,13 @@ from pydantic import BaseModel
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
 from vidoctor.graph import Category, run_analysis
+from vidoctor.llm import LLMCallMetrics
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
     DIM_TO_STATE_FIELD,
     AnalysisState,
 )
+from vidoctor.vision.category_classifier import classify_category
 from vidoctor.repository import (
     complete_analysis,
     create_video_signed_url,
@@ -247,7 +249,7 @@ async def _analyze_stream(
     *,
     upload: UploadFile | None,
     url: str | None,
-    category: Category,
+    category: Category | Literal["auto"],
 ) -> AsyncIterator[str]:
     """영상(파일 업로드 또는 유튜브 URL)을 임시 파일에 떨군 뒤 R2 업로드 → graph 실행 → DB 저장.
 
@@ -257,6 +259,7 @@ async def _analyze_stream(
     tmp_path: Path | None = None
     analysis_id: str | None = None
     video_id: str | None = None
+    classify_metrics: LLMCallMetrics | None = None
 
     try:
         # 1) 소스 → 로컬 tmp 파일. URL 경로는 다운로드 단계 표시를 위한 별도 SSE phase.
@@ -268,8 +271,6 @@ async def _analyze_stream(
                 yield _sse("error", {"message": str(e), "analysis_id": None})
                 return
             filename = f"{title}.mp4"
-            # 다운로드가 끝나야 비로소 영상 제목을 알 수 있다 — 헤더 placeholder
-            # "유튜브 URL"을 실제 제목으로 교체하도록 클라이언트에 통지.
             yield _sse("metadata", {"filename": filename})
         else:
             if upload is None:
@@ -277,8 +278,22 @@ async def _analyze_stream(
                 raise RuntimeError("upload XOR url invariant broken")
             tmp_path, filename = await _save_upload_to_tmp(upload)
 
-        yield _sse("status", {"phase": "uploading"})
-        storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
+        # 2) auto면 분류(~1-2s)와 R2 업로드(수 초)를 병렬 실행 — 둘 다 IO bound이고
+        # 입력 의존성이 없다. classify는 cv2 POS_MSEC seek로 키프레임만 읽어 동시 접근에
+        # race가 없으며, videos row 삽입 직전까지 둘 다 완료되면 된다.
+        if category == "auto":
+            yield _sse("status", {"phase": "classifying"})
+            classify_task = asyncio.create_task(classify_category(str(tmp_path)))
+            upload_task = asyncio.create_task(
+                asyncio.to_thread(upload_video_file, tmp_path, filename)
+            )
+            category, classify_metrics = await classify_task
+            yield _sse("category", {"category": category})
+            yield _sse("status", {"phase": "uploading"})
+            storage_path = await upload_task
+        else:
+            yield _sse("status", {"phase": "uploading"})
+            storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
 
         # videos·analyses row 만들고 client에 analysis_id 통지 — 이후 graph가 끝나기 전에
         # client가 새로고침해도 in-progress row를 폴링할 수 있게.
@@ -319,6 +334,12 @@ async def _analyze_stream(
 
         graph_state = await graph_task
 
+        # 분류기 LLM 비용도 영상당 총 비용에 합산되도록 step_metrics에 push.
+        # graph 노드들의 `Annotated[..., add]` reducer와 동일 의미를 graph 외부에서 흉내.
+        if classify_metrics is not None:
+            existing = graph_state.get("step_metrics") or []
+            graph_state["step_metrics"] = [*existing, classify_metrics]
+
         await asyncio.to_thread(complete_analysis, analysis_id, video_id, graph_state)
         yield _sse("complete", {"analysis_id": analysis_id})
 
@@ -347,7 +368,8 @@ async def analyze(
     file: UploadFile | None = File(default=None),
     url: str | None = Form(default=None),
 ) -> StreamingResponse:
-    if category not in CATEGORY_DIMENSIONS:
+    # "auto"는 분류기 위임. 그 외에는 CATEGORY_DIMENSIONS 멤버여야 graph 분기가 안전.
+    if category != "auto" and category not in CATEGORY_DIMENSIONS:
         raise HTTPException(status_code=400, detail=f"unknown category: {category}")
     # 파일 XOR URL — 둘 다 들어오거나 둘 다 비면 400.
     has_file = file is not None and (file.filename or "") != ""
@@ -356,7 +378,9 @@ async def analyze(
         raise HTTPException(
             status_code=400, detail="file 또는 url 중 정확히 하나를 제공해야 합니다."
         )
-    cat = cast(Category, category)
+    cat: Category | Literal["auto"] = (
+        "auto" if category == "auto" else cast(Category, category)
+    )
     return StreamingResponse(
         _analyze_stream(
             upload=file if has_file else None,

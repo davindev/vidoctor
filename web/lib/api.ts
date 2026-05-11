@@ -4,6 +4,9 @@
 
 export type Category = "lecture" | "vlog" | "other";
 
+/** 사용자가 폼에서 고르는 값. "auto"는 백엔드 분류기에 위임한다. */
+export type CategoryChoice = Category | "auto";
+
 export type Dimension =
   | "filler"
   | "cps"
@@ -15,6 +18,14 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   lecture: "강의",
   vlog: "브이로그",
   other: "기타",
+};
+
+/** 폼 select 옵션. 순서는 표시 순서와 일치 (auto가 첫번째). */
+export const CATEGORY_CHOICE_LABEL: Record<CategoryChoice, string> = {
+  auto: "자동 분류 (영상 보고 결정)",
+  lecture: CATEGORY_LABEL.lecture,
+  vlog: CATEGORY_LABEL.vlog,
+  other: CATEGORY_LABEL.other,
 };
 
 export const DIMENSION_LABEL: Record<Dimension, string> = {

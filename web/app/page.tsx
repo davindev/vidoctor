@@ -5,7 +5,12 @@ import { AnalyzingView } from "@/components/AnalyzingView";
 import { IdleForm } from "@/components/IdleForm";
 import { ResultView } from "@/components/ResultView";
 import { Sidebar } from "@/components/Sidebar";
-import { fetchAnalyses, type AnalysisListItem, type Category } from "@/lib/api";
+import {
+  fetchAnalyses,
+  type AnalysisListItem,
+  type Category,
+  type CategoryChoice,
+} from "@/lib/api";
 import {
   postAnalyze,
   type AnalyzeEvent,
@@ -17,7 +22,7 @@ type AppState =
   | { kind: "idle"; lastError: string | null }
   | {
       kind: "analyzing";
-      category: Category;
+      category: Category | null;
       filename: string | null;
       phase: AnalyzingPhase;
       completed: Set<string>;
@@ -52,17 +57,25 @@ export default function Home() {
     setState({ kind: "idle", lastError: null });
   };
 
-  const handleSubmit = async (source: AnalyzeSource, category: Category) => {
-    // URL 흐름은 제목을 다운로드 완료 후에야 알 수 있어 초기 filename=null.
-    // AnalyzingView가 phase==="downloading"이면 "유튜브 URL" placeholder로 보정한다.
+  const handleSubmit = async (
+    source: AnalyzeSource,
+    category: CategoryChoice,
+  ) => {
+    // URL 흐름은 제목·카테고리 모두 도착 이벤트로 채워지므로 초기엔 null.
     const initialFilename =
       source.kind === "file" ? source.file.name : null;
+    const initialCategory: Category | null =
+      category === "auto" ? null : category;
     const initialPhase: AnalyzingPhase =
-      source.kind === "url" ? "downloading" : "uploading";
+      source.kind === "url"
+        ? "downloading"
+        : category === "auto"
+          ? "classifying"
+          : "uploading";
 
     setState({
       kind: "analyzing",
-      category,
+      category: initialCategory,
       filename: initialFilename,
       phase: initialPhase,
       completed: new Set(),
@@ -90,6 +103,10 @@ export default function Home() {
                 return prev.filename === ev.filename
                   ? prev
                   : { ...prev, filename: ev.filename };
+              case "category":
+                return prev.category === ev.category
+                  ? prev
+                  : { ...prev, category: ev.category };
               case "uploaded":
                 return prev.phase === "running" ? prev : { ...prev, phase: "running" };
               case "node": {
@@ -114,7 +131,7 @@ export default function Home() {
       status.exit = "error";
       setState({
         kind: "analyzing",
-        category,
+        category: initialCategory,
         filename: initialFilename,
         phase: initialPhase,
         completed: new Set(),

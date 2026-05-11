@@ -29,7 +29,7 @@ _PRICE_USD_PER_1M: dict[str, tuple[float, float]] = {
 }
 
 # step 추가 시 여기 한 줄 — 오타·불일치는 컴파일 타임에 검출.
-LLMStep = Literal["content_gap", "suggestions"]
+LLMStep = Literal["content_gap", "suggestions", "classify_category"]
 
 
 @dataclass(frozen=True)

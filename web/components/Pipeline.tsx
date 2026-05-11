@@ -10,8 +10,19 @@ import type { AnalyzingPhase } from "@/lib/sse";
 
 type NodeState = "waiting" | "active" | "done" | "skipped";
 
+// 첫 노드의 [라벨, active 텍스트]. uploaded 이후(phase="running")는 라벨이 안 쓰이고
+// `doneLabel="업로드 완료"`가 표시된다.
+const FIRST_NODE_COPY: Record<
+  Exclude<AnalyzingPhase, "running">,
+  [string, string]
+> = {
+  downloading: ["유튜브 다운로드", "다운로드중"],
+  classifying: ["카테고리 분류", "분류중"],
+  uploading: ["영상 업로드", "업로드중"],
+};
+
 interface Props {
-  category: Category;
+  category: Category | null;
   phase: AnalyzingPhase;
   completed: Set<string>;
   errorMessage: string | null;
@@ -32,7 +43,7 @@ const BRANCH_TOPS = BRANCH_RATIOS.map((r) => `${(r * 100).toFixed(2)}%`);
 const WIRE_BRANCH_Y = BRANCH_RATIOS.map((r) => r * VIEW_HEIGHT);
 
 function deriveStates(
-  category: Category,
+  category: Category | null,
   phase: AnalyzingPhase,
   completed: Set<string>,
 ): {
@@ -43,13 +54,17 @@ function deriveStates(
 } {
   const uploadDone = phase === "running";
   const transcribeDone = completed.has("transcribe");
-  const activeDims = new Set(CATEGORY_DIMENSIONS[category]);
+  // 분류 전(category=null)에는 어떤 차원이 활성될지 모르므로 모두 후보로 두고 waiting 표시.
+  const activeDimList: readonly Dimension[] = category
+    ? CATEGORY_DIMENSIONS[category]
+    : ALL_DIMS;
+  const activeDims = new Set(activeDimList);
   const branches: NodeState[] = ALL_DIMS.map((dim) => {
     if (!activeDims.has(dim)) return "skipped";
     if (completed.has(`detect_${dim}`)) return "done";
     return transcribeDone ? "active" : "waiting";
   });
-  const allDetectorsDone = CATEGORY_DIMENSIONS[category].every((d) =>
+  const allDetectorsDone = activeDimList.every((d) =>
     completed.has(`detect_${d}`),
   );
   const suggestionsDone = completed.has("generate_suggestions");
@@ -98,11 +113,10 @@ export function Pipeline({
 }: Props) {
   const states = deriveStates(category, phase, completed);
   const step = progressStep(states);
-  // URL 흐름의 다운로드 → R2 업로드를 첫 노드 한 곳에서 표시. 완료 시점부터는 "업로드 완료" 고정.
-  const uploadLabel =
-    phase === "downloading" ? "유튜브 다운로드" : "영상 업로드";
-  const uploadActiveText =
-    phase === "downloading" ? "다운로드중" : "업로드중";
+  // 첫 노드는 download → classify → upload 세 가지 사전 단계를 모두 흡수해 표시.
+  // phase==="running"이면 라벨은 더 이상 안 쓰이고 `doneLabel="업로드 완료"`가 우선.
+  const [uploadLabel, uploadActiveText] =
+    phase === "running" ? FIRST_NODE_COPY.uploading : FIRST_NODE_COPY[phase];
   const allDone =
     states.upload === "done" &&
     states.transcribe === "done" &&
