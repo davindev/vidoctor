@@ -7,6 +7,7 @@ import {
   type Dimension,
 } from "@/lib/api";
 import type { AnalyzingPhase } from "@/lib/sse";
+import { ErrorBanner } from "./ErrorBanner";
 
 type NodeState = "waiting" | "active" | "done" | "skipped";
 
@@ -212,9 +213,11 @@ export function Pipeline({
       </div>
 
       {errorMessage && (
-        <div className="mt-5 flex items-center gap-2 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger">
-          분석 실패: {errorMessage}
-        </div>
+        <ErrorBanner
+          icon={false}
+          message={`분석 실패: ${errorMessage}`}
+          className="mt-5"
+        />
       )}
     </section>
   );

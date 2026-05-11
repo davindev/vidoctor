@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { fileExt, fmtBytes } from "@/lib/format";
+import { ErrorBanner } from "./ErrorBanner";
 
 const MAX_BYTES = 300 * 1024 * 1024;
 const ALLOWED_EXT = ["mp4", "mov", "mpeg4"];
@@ -117,20 +118,7 @@ export function Dropzone({ file, disabled, onChange }: Props) {
         </div>
       )}
 
-      {error && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.4" />
-            <path
-              d="M7 4V7.5M7 9.5V10"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} className="mt-3" />}
     </>
   );
 }

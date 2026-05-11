@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CATEGORY_CHOICE_LABEL, type CategoryChoice } from "@/lib/api";
 import type { AnalyzeSource } from "@/lib/sse";
 import { Dropzone } from "./Dropzone";
+import { ErrorBanner } from "./ErrorBanner";
 
 interface Props {
   disabled: boolean;
@@ -42,35 +43,18 @@ export function IdleForm({ disabled, lastError, onSubmit }: Props) {
       <h1 className="font-serif text-[46px] font-semibold leading-[1.05] tracking-[-0.028em] text-ink">
         <span className="text-accent">분석</span> 시작하기
       </h1>
-      <p className="mt-4 mb-11 max-w-[56ch] text-base leading-[1.65] text-ink-3">
-        영상 카테고리를 선택하고 파일 또는 유튜브 URL을 입력하면 자동으로 분석이
-        시작됩니다.
+      <p className="mt-4 mb-11 text-base leading-[1.65] text-ink-3">
+        영상 카테고리를 선택하고 파일 또는 유튜브 URL을 입력하면 자동으로 분석이 시작됩니다.
         <br />
         결과는 좌측 <b className="font-semibold text-ink">이전 기록</b>에 저장됩니다.
       </p>
 
       {lastError && (
-        <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-4 py-3 text-[13px] text-danger">
-          <svg
-            className="mt-[2px] flex-shrink-0"
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-          >
-            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.4" />
-            <path
-              d="M7 4V7.5M7 9.5V10"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-          <div className="leading-[1.55]">
-            <div className="font-semibold">이전 분석이 실패했습니다.</div>
-            <div className="mt-0.5 text-ink-2">{lastError}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="이전 분석이 실패했습니다."
+          message={lastError}
+          className="mb-6 px-4 py-3"
+        />
       )}
 
       <div className="overflow-hidden rounded-xl border border-line bg-surface">
@@ -251,18 +235,10 @@ function UrlInput({
         }`}
       />
       {invalid && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.4" />
-            <path
-              d="M7 4V7.5M7 9.5V10"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span>youtube.com 또는 youtu.be URL만 지원합니다.</span>
-        </div>
+        <ErrorBanner
+          message="youtube.com 또는 youtu.be URL만 지원합니다."
+          className="mt-3"
+        />
       )}
       <p className="mt-2.5 text-[12.5px] leading-[1.7] text-ink-4">
         최대 10분 · youtube.com / youtu.be 링크

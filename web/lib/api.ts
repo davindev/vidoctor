@@ -22,7 +22,7 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 
 /** 폼 select 옵션. 순서는 표시 순서와 일치 (auto가 첫번째). */
 export const CATEGORY_CHOICE_LABEL: Record<CategoryChoice, string> = {
-  auto: "자동 분류 (영상 보고 결정)",
+  auto: "자동 분류",
   lecture: CATEGORY_LABEL.lecture,
   vlog: CATEGORY_LABEL.vlog,
   other: CATEGORY_LABEL.other,
@@ -135,12 +135,16 @@ export interface VideoUrlResponse {
  * rewrite proxy를 통하게 한다. dev 환경에서는 직접 FastAPI를 가리켜 proxy 회피 권장. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
+/** HTTP 응답이 실패면 body까지 포함한 Error 던지기. fetch 호출자가 공유. */
+export async function assertOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const body = await res.text().catch(() => "");
+  throw new Error(`${res.status} ${res.statusText}: ${body}`);
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${body}`);
-  }
+  await assertOk(res);
   return res.json() as Promise<T>;
 }
 
@@ -163,7 +167,5 @@ export async function deleteAnalysis(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/analyses/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
+  await assertOk(res);
 }

@@ -16,6 +16,7 @@ import {
   fetchVideoUrl,
 } from "@/lib/api";
 import { basename, fmtHMS } from "@/lib/format";
+import { ErrorBanner } from "./ErrorBanner";
 import { ResultHeader, ResultPage } from "./ResultHeader";
 
 interface Props {
@@ -233,9 +234,11 @@ export function ResultView({ analysisId, onDeleted }: Props) {
       </div>
 
       {deleteError && (
-        <div className="mt-3 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger">
-          삭제 실패: {deleteError}
-        </div>
+        <ErrorBanner
+          icon={false}
+          message={`삭제 실패: ${deleteError}`}
+          className="mt-3"
+        />
       )}
 
       {confirmOpen && (

@@ -3,7 +3,7 @@
  * 표준 EventSource는 GET·동일 origin·credentials만 받아 multipart 업로드와 안 맞음.
  * fetch + ReadableStream 으로 직접 SSE 프레임을 파싱한다 — `event: <name>\ndata: <json>\n\n`. */
 
-import { API_BASE, type Category, type CategoryChoice } from "./api";
+import { API_BASE, assertOk, type Category, type CategoryChoice } from "./api";
 
 /** 클라이언트 측 진행 단계. 서버는 "downloading" | "classifying" | "uploading"을 보내고,
  * "running"은 `uploaded` 이벤트 후 클라이언트가 derive. */
@@ -66,9 +66,9 @@ export async function postAnalyze(opts: AnalyzeOptions): Promise<void> {
     body: form,
     signal: opts.signal,
   });
-  if (!res.ok || !res.body) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  await assertOk(res);
+  if (!res.body) {
+    throw new Error("응답 본문이 비어 있습니다 (SSE 스트림 없음)");
   }
 
   const reader = res.body.getReader();
