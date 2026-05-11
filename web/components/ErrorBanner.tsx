@@ -19,7 +19,7 @@ interface Props {
 export function ErrorBanner({ title, message, icon = true, className }: Props) {
   return (
     <div
-      className={`flex items-start gap-2.5 rounded-lg border border-[#EFCBB9] bg-[#FBEAE3] px-3 py-2.5 text-[13px] text-danger ${
+      className={`flex items-start gap-2.5 rounded-lg border border-danger-soft bg-danger-tint px-3 py-2.5 text-[13px] text-danger ${
         className ?? ""
       }`}
     >

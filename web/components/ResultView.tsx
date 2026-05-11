@@ -29,6 +29,9 @@ const CPS_KIND_LABEL: Record<string, string> = {
   too_slow: "느림",
 };
 
+// 백엔드 _DIRECTIONS는 화자 머리 좌표계 — yaw +가 화자 기준 right(머리가 오른쪽 회전).
+// 시청자는 영상을 거울처럼 보므로(화자의 오른쪽 = 화면의 왼쪽) UI 라벨만 좌우 mirror.
+// up/down은 시청자 시점과 일치하므로 그대로.
 const GAZE_DIRECTION_LABEL: Record<string, string> = {
   front: "정면",
   left: "오른쪽",
@@ -41,16 +44,20 @@ const GAZE_DIRECTION_LABEL: Record<string, string> = {
   right_down: "왼쪽 아래",
 };
 
-function findingDetail(dim: Dimension, ev: FindingItem): string {
-  const p = ev.payload;
-  if (dim === "filler") return String(p.text ?? "");
-  if (dim === "cps") return CPS_KIND_LABEL[String(p.kind ?? "")] ?? "";
-  if (dim === "gaze")
-    return GAZE_DIRECTION_LABEL[String(p.direction ?? "")] ?? String(p.direction ?? "");
-  if (dim === "dead_zone") return `${(ev.end - ev.start).toFixed(1)}초`;
-  if (dim === "content_gap") return String(p.description ?? "");
-  return "";
-}
+// 차원별 finding payload → 표시 텍스트. Record로 묶어 차원 추가 시 exhaustive 검증.
+const FINDING_DETAIL: Record<Dimension, (ev: FindingItem) => string> = {
+  filler: (ev) => String(ev.payload.text ?? ""),
+  cps: (ev) => CPS_KIND_LABEL[String(ev.payload.kind ?? "")] ?? "",
+  gaze: (ev) => {
+    const d = String(ev.payload.direction ?? "");
+    return GAZE_DIRECTION_LABEL[d] ?? d;
+  },
+  dead_zone: (ev) => `${(ev.end - ev.start).toFixed(1)}초`,
+  content_gap: (ev) => String(ev.payload.description ?? ""),
+};
+
+const findingDetail = (dim: Dimension, ev: FindingItem): string =>
+  FINDING_DETAIL[dim](ev);
 
 export function ResultView({ analysisId, onDeleted }: Props) {
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
@@ -227,7 +234,7 @@ export function ResultView({ analysisId, onDeleted }: Props) {
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          className="flex-shrink-0 rounded-full border border-[#E5C2BD] bg-transparent px-4 py-2 text-[13px] font-medium text-danger transition-[background,border-color] duration-150 hover:border-danger hover:bg-[#FBEAE3]"
+          className="flex-shrink-0 rounded-full border border-[#E5C2BD] bg-transparent px-4 py-2 text-[13px] font-medium text-danger transition-[background,border-color] duration-150 hover:border-danger hover:bg-danger-tint"
         >
           삭제
         </button>

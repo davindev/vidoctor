@@ -26,6 +26,8 @@
   --color-surface-tint: #f5efe6;
 
   --color-danger: #b5483d;
+  --color-danger-soft: #efcbb9;
+  --color-danger-tint: #fbeae3;
 
   /* Pretendard는 CSS @import로, 나머지는 next/font가 주입한 CSS 변수를 참조 — html
      className에 `${sourceSerif.variable} ${jetbrainsMono.variable}`이 붙어야 동작. */

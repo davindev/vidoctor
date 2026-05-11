@@ -230,7 +230,7 @@ function UrlInput({
         onChange={(e) => onChange(e.target.value)}
         className={`w-full rounded-md border bg-surface px-3.5 py-3 text-sm text-ink transition-[border-color,box-shadow] duration-[120ms] placeholder:text-ink-4 focus:outline-none focus:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 ${
           invalid
-            ? "border-[#EFCBB9] focus:border-danger focus:ring-[#FBEAE3]"
+            ? "border-danger-soft focus:border-danger focus:ring-danger-tint"
             : "border-line-2 hover:border-ink-3 focus:border-accent focus:ring-accent-tint"
         }`}
       />
