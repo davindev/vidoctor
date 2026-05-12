@@ -32,14 +32,19 @@ type AppState =
 
 export default function Home() {
   const [items, setItems] = useState<AnalysisListItem[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [state, setState] = useState<AppState>({ kind: "idle", lastError: null });
 
   const refreshHistory = useCallback(async () => {
     try {
       const list = await fetchAnalyses();
       setItems(list);
+      setHistoryError(null);
     } catch (e) {
       console.error("failed to load history", e);
+      setHistoryError(
+        e instanceof Error ? e.message : "이전 분석 목록을 불러오지 못했습니다.",
+      );
     }
   }, []);
 
@@ -170,6 +175,7 @@ export default function Home() {
         items={items}
         selectedId={selectedId}
         disabled={sidebarDisabled}
+        loadError={historyError}
         onSelect={handleSelect}
         onNewAnalysis={handleNewAnalysis}
       />
