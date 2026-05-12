@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
@@ -28,6 +28,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
+from vidoctor.errors import SafeError
 from vidoctor.graph import Category, run_analysis
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
@@ -35,6 +36,7 @@ from vidoctor.graph.state import (
     AnalysisState,
 )
 from vidoctor.llm import LLMCallMetrics
+from vidoctor.log_setup import analysis_id_var, configure_logging
 from vidoctor.repository import (
     complete_analysis,
     create_video_signed_url,
@@ -54,7 +56,25 @@ from vidoctor.vision.category_classifier import classify_category
 
 _log = logging.getLogger(__name__)
 
-app = FastAPI(title="Vidoctor API", version="0.1.0")
+# 한 분석의 하드 cap. 10분 영상이라도 WhisperX/MediaPipe/GPT-4o Vision 합쳐 보통 ~5분.
+# 15분이면 hang 케이스만 끊고 정상은 통과.
+_ANALYSIS_TIMEOUT_SEC = 15 * 60
+
+# 동시 진행 분석 cap. WhisperX·MediaPipe 모델 각 ~1-2GB RAM이라 무제한 동시는 OOM 위험.
+# 시연 환경 단일 인스턴스 기준 2개로 시작 — 큐가 차면 새 요청은 503 즉시 거절(SSE 안 열고).
+_MAX_CONCURRENT_ANALYSES = 2
+_analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """프로세스 시작 시 JSON 로거 1회 구성. import side-effect로 두면 pytest caplog와
+    충돌하므로 lifespan에서 명시적 호출."""
+    configure_logging()
+    yield
+
+
+app = FastAPI(title="Vidoctor API", version="0.1.0", lifespan=_lifespan)
 
 # Dev 단계 CORS — Next.js dev (localhost:3000) + 동일 호스트 prod 빌드 모두 허용.
 # prod 배포 시 origin allowlist 좁히는 것 권장.
@@ -255,11 +275,39 @@ async def _analyze_stream(
 
     각 단계 시점에 SSE 이벤트를 yield. 클라이언트는 `EventSource` 또는 fetch+ReadableStream
     으로 구독해 진행 그래프를 갱신.
+
+    `_analysis_slot` 세마포어로 동시 분석 수를 제한 — 모델 메모리(~1-2GB × N)가 OOM
+    유발하지 않도록. 큐가 꽉 차면 즉시 사용자에게 안내 메시지를 보내고 종료.
     """
+    # asyncio.timeout(0)로 즉시 try-acquire — 세마포어 race 없이 cap 결정. _value 같은
+    # private 속성 접근 회피.
+    try:
+        async with asyncio.timeout(0):
+            await _analysis_slot.acquire()
+    except TimeoutError:
+        yield _sse(
+            "error",
+            {
+                "message": (
+                    f"동시 분석 {_MAX_CONCURRENT_ANALYSES}건 한도에 도달했습니다. "
+                    "잠시 후 다시 시도해주세요."
+                ),
+                "analysis_id": None,
+            },
+        )
+        return
+
     tmp_path: Path | None = None
     analysis_id: str | None = None
     video_id: str | None = None
     classify_metrics: LLMCallMetrics | None = None
+    analysis_id_token = None
+
+    async def _safe_fail(reason: str) -> None:
+        """fail_analysis 베스트 에포트 — DB row가 in-progress로 영구 남지 않게."""
+        if analysis_id and video_id:
+            with suppress(Exception):
+                await asyncio.to_thread(fail_analysis, analysis_id, video_id, reason)
 
     try:
         # 1) 소스 → 로컬 tmp 파일. URL 경로는 다운로드 단계 표시를 위한 별도 SSE phase.
@@ -299,6 +347,12 @@ async def _analyze_stream(
         # client가 새로고침해도 in-progress row를 폴링할 수 있게.
         video_id = await asyncio.to_thread(insert_video, storage_path, category, None)
         analysis_id = await asyncio.to_thread(insert_analysis, video_id)
+        # 이 분석의 모든 로그에 analysis_id 자동 부착. Token은 finally에서 reset.
+        analysis_id_token = analysis_id_var.set(analysis_id)
+        _log.info(
+            "analysis started",
+            extra={"category": category, "filename": filename, "source": "url" if url else "file"},
+        )
         yield _sse("started", {"analysis_id": analysis_id})
         yield _sse("uploaded", {})
 
@@ -311,6 +365,11 @@ async def _analyze_stream(
         node_queue: asyncio.Queue[Any] = asyncio.Queue()
 
         def _on_node(name: str) -> None:
+            # LangGraph가 to_thread로 떨군 sync 노드에서 콜백할 수 있어 로깅을 thread-safe로
+            # main loop에 schedule — analysis_id contextvar가 main task에 묶여 있기 때문.
+            loop.call_soon_threadsafe(
+                lambda: _log.info("graph node done", extra={"node": name})
+            )
             loop.call_soon_threadsafe(
                 node_queue.put_nowait, ("node", {"name": name})
             )
@@ -325,14 +384,25 @@ async def _analyze_stream(
 
         graph_task = asyncio.create_task(_drive_graph())
 
-        while True:
-            item = await node_queue.get()
-            if item is _SENTINEL:
-                break
-            event_name, payload = item
-            yield _sse(event_name, payload or {})
-
-        graph_state = await graph_task
+        try:
+            # 전체 분석 hard cap — 10분 영상 + WhisperX/MediaPipe/GPT-4o-Vision 합쳐도
+            # 보통 ~5분. 15분이면 hang 케이스만 끊고 정상은 통과.
+            async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
+                while True:
+                    item = await node_queue.get()
+                    if item is _SENTINEL:
+                        break
+                    event_name, payload = item
+                    yield _sse(event_name, payload or {})
+                graph_state = await graph_task
+        finally:
+            # timeout/cancel 등 비정상 종료 경로에서 graph_task가 detached로 남지 않게.
+            # 정상 종료엔 done이라 no-op. cancel 후 5초 안에 안 끝나면 thread cleanup
+            # 포기 (sync 모델 호출 안에 갇히면 어차피 cooperative cancel 불가).
+            if not graph_task.done():
+                graph_task.cancel()
+                with suppress(Exception, asyncio.CancelledError, TimeoutError):
+                    await asyncio.wait_for(graph_task, 5.0)
 
         # 분류기 LLM 비용도 영상당 총 비용에 합산되도록 step_metrics에 push.
         # graph 노드들의 `Annotated[..., add]` reducer와 동일 의미를 graph 외부에서 흉내.
@@ -341,25 +411,37 @@ async def _analyze_stream(
             graph_state["step_metrics"] = [*existing, classify_metrics]
 
         await complete_analysis(analysis_id, video_id, graph_state)
+        total_cost = sum(m.cost_usd for m in (graph_state.get("step_metrics") or []))
+        _log.info("analysis completed", extra={"total_cost_usd": round(total_cost, 6)})
         yield _sse("complete", {"analysis_id": analysis_id})
 
     except (asyncio.CancelledError, GeneratorExit):
         # 클라이언트 disconnect — DB row가 in-progress로 영구히 남지 않게 fail 처리.
-        if analysis_id and video_id:
-            with suppress(Exception):
-                await asyncio.to_thread(
-                    fail_analysis, analysis_id, video_id, "client disconnected"
-                )
+        await _safe_fail("client disconnected")
         raise
+    except TimeoutError:
+        _log.warning("analysis pipeline timeout")
+        await _safe_fail("analysis timeout")
+        yield _sse(
+            "error",
+            {
+                "message": "분석 시간이 초과되어 중단되었습니다. 더 짧은 영상으로 다시 시도해주세요.",
+                "analysis_id": analysis_id,
+            },
+        )
     except Exception as e:  # noqa: BLE001
         _log.exception("analysis pipeline failed")
-        if analysis_id and video_id:
-            with suppress(Exception):
-                await asyncio.to_thread(fail_analysis, analysis_id, video_id, str(e))
-        yield _sse("error", {"message": str(e), "analysis_id": analysis_id})
+        await _safe_fail(str(e))
+        # 내부 예외 메시지 그대로 노출하면 Supabase/OpenAI raw error가 새어나감.
+        # SafeError처럼 의도적으로 user-facing인 예외만 메시지 그대로, 나머지는 일반화.
+        public = e.public_message if isinstance(e, SafeError) else "분석 중 오류가 발생했습니다."
+        yield _sse("error", {"message": public, "analysis_id": analysis_id})
     finally:
+        if analysis_id_token is not None:
+            analysis_id_var.reset(analysis_id_token)
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
+        _analysis_slot.release()
 
 
 @app.post("/api/analyze")

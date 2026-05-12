@@ -147,6 +147,9 @@ def get_chat_model(
         # 429 burst를 SDK 지수 backoff로 흡수. 5회면 burst-heavy eval 안정 통과,
         # 영구 실패 시 빠른 fail-fast가 가능한 균형점.
         max_retries=5,
+        # 개별 호출이 응답 안 오면 60초 후 끊어 한 분석이 무한 대기하지 않게.
+        # GPT-4o Vision multi-image도 보통 ~5초 내 응답이라 충분 마진.
+        timeout=60.0,
         api_key=settings.openai_api_key,
         callbacks=[_langfuse_handler()],
     )

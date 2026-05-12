@@ -74,7 +74,12 @@ def _s3_client() -> Any:
         aws_access_key_id=settings.r2_access_key_id.get_secret_value(),
         aws_secret_access_key=settings.r2_secret_access_key.get_secret_value(),
         region_name="auto",
-        config=Config(signature_version="s3v4"),
+        # standard retry mode = 5xx + throttle + 네트워크 일시 오류에 대해 SDK 내부에서
+        # 지수 backoff. 영구 실패(401/403/schema)는 첫 시도에 raise되어 retry 안 됨.
+        config=Config(
+            signature_version="s3v4",
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
     )
 
 
@@ -142,7 +147,7 @@ def upload_video_file(local_path: Path, storage_name: str) -> str:
     """영상을 R2에 업로드 후 객체 키(storage_path) 반환. 동일 키면 덮어씀.
 
     boto3 `upload_fileobj`는 5MB 단위 자동 multipart라 300MB 영상도 메모리 폭발 없이
-    스트리밍 업로드. 반환값은 `generate_presigned_url` / `delete_object`에 그대로 전달.
+    스트리밍 업로드. transient 5xx/throttle은 boto3 Config(retries) 내장 backoff가 흡수.
     """
     settings = get_settings()
     with local_path.open("rb") as f:

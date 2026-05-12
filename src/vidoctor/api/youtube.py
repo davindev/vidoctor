@@ -16,6 +16,8 @@ from typing import Any, cast
 
 import yt_dlp as _yt_dlp
 
+from vidoctor.errors import SafeError
+
 # 모듈 stubs가 일부만 typed라 dict[str, object] params·DownloadError 접근에서 pyright가
 # 걸린다. 런타임에는 둘 다 안정적으로 존재 — 모듈 전체를 Any로 캐스팅해 좁히지 않는다.
 yt_dlp: Any = cast(Any, _yt_dlp)
@@ -29,7 +31,7 @@ MAX_DURATION_SEC = 600  # 10분 cap — IdleForm 안내 문구와 동기화
 _HOST_PATTERN = re.compile(r"^https?://(www\.|m\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
 
 
-class YouTubeIngestError(Exception):
+class YouTubeIngestError(SafeError):
     """사용자에게 그대로 노출할 수 있는 다운로드/검증 단계 에러."""
 
 
@@ -57,6 +59,11 @@ def _download_sync(url: str) -> tuple[Path, str]:
         "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
         "overwrites": True,
         "noplaylist": True,
+        # youtube가 응답 끊거나 느린 chunk를 보내도 분석이 무한 대기하지 않도록 stuck 가드.
+        "socket_timeout": 30,
+        # 재시도는 yt-dlp가 알아서. 한 fragment 5회면 가벼운 jitter는 흡수, 영구 fail은 fast.
+        "retries": 5,
+        "fragment_retries": 5,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
