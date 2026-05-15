@@ -23,6 +23,7 @@ FaceLandmarker.task 모델 파일을 첫 호출 시 자동 다운로드(`models/
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import urllib.request
 from dataclasses import dataclass
@@ -47,6 +48,11 @@ _LANDMARKER_MODEL_URL = (
     "face_landmarker/float16/latest/face_landmarker.task"
 )
 _LANDMARKER_MODEL_PATH = _MODEL_DIR / "face_landmarker.task"
+# Google MediaPipe CDN의 `latest` 경로는 무공지 교체될 수 있어 silent drift 위험. hash를
+# 코드에 박아 받은 파일을 검증하고, 불일치 시 fail-loud + 골든셋 재평가 사이클로 의식적 갱신.
+_LANDMARKER_MODEL_SHA256 = (
+    "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
+)
 
 # BlazeFace short-range: 가까운 거리(~2m)의 얼굴 검출용. FaceLandmarker는 큰 얼굴 가정으로
 # 학습돼 강의 영상의 작은 웹캠 영역(전체의 5% 이하) 얼굴을 못 잡는 경우가 많아, 별도 단계로
@@ -56,6 +62,9 @@ _DETECTOR_MODEL_URL = (
     "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite"
 )
 _DETECTOR_MODEL_PATH = _MODEL_DIR / "blaze_face_short_range.tflite"
+_DETECTOR_MODEL_SHA256 = (
+    "b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f"
+)
 
 # 일반 성인 얼굴 6점 3D 모델 (mm). solvePnP 표준 reference.
 # (코끝, 턱끝, 왼눈 좌측 corner, 오른눈 우측 corner, 입 좌측, 입 우측)
@@ -275,12 +284,54 @@ def _samples_to_events(
     return events
 
 
-def _ensure_model(url: str, path: Path) -> Path:
-    """모델 파일을 첫 호출 시 다운로드해 캐시. 이후엔 파일만 반환."""
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@lru_cache(maxsize=2)
+def _ensure_model(url: str, path: Path, expected_sha256: str) -> Path:
+    """모델 파일을 캐시 + SHA256으로 무결성 검증.
+
+    실패 정책:
+    - 다운로드 자체 실패: urllib 예외 전파 (호출자가 catch).
+    - 받은 파일 hash 불일치: tmp 삭제, 최종 경로 보존, RuntimeError. Google이 `latest`
+      교체했을 가능성 → 의도적 업그레이드면 골든셋 재평가 후 상수 갱신.
+    - 기존 파일 hash 불일치: 자동 재다운로드 안 함(의도적 교체 silent 덮어쓰기 회피).
+      RuntimeError 메시지에 `rm <path>` 후 재실행 안내.
+
+    원자성: tmp에 받아 검증 통과 후 path.replace로 atomic rename. 중간 실패에도 최종
+    경로는 늘 valid 상태(옛 정상본 또는 새 정상본).
+
+    lru_cache: `_sample_video_pose`가 영상마다 호출되며 _ensure_model을 부르는데 같은
+    인자(2종)면 결과 동일하므로 프로세스 수명 동안 검증 1회면 충분.
+    """
     if path.exists():
-        return path
+        actual = _sha256_of(path)
+        if actual == expected_sha256:
+            return path
+        raise RuntimeError(
+            f"기존 모델 hash 불일치 ({path.name}): "
+            f"expected={expected_sha256[:12]}…, actual={actual[:12]}…. "
+            f"`rm {path}` 후 재실행하면 자동 재다운로드."
+        )
+
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, path)
+    tmp = path.parent / (path.name + ".tmp")
+    urllib.request.urlretrieve(url, tmp)
+
+    actual = _sha256_of(tmp)
+    if actual != expected_sha256:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"받은 모델 hash 불일치 ({path.name}): {url}이 교체됐을 수 있음. "
+            f"expected={expected_sha256}, actual={actual}. "
+            f"의도적 업그레이드면 골든셋 재평가 후 코드 상수 갱신."
+        )
+    tmp.replace(path)
     return path
 
 
@@ -297,7 +348,11 @@ def _get_face_detector():  # noqa: ANN202
 
     options = mp_vision.FaceDetectorOptions(
         base_options=mp_tasks.BaseOptions(
-            model_asset_path=str(_ensure_model(_DETECTOR_MODEL_URL, _DETECTOR_MODEL_PATH))
+            model_asset_path=str(
+                _ensure_model(
+                    _DETECTOR_MODEL_URL, _DETECTOR_MODEL_PATH, _DETECTOR_MODEL_SHA256
+                )
+            )
         ),
         running_mode=mp_vision.RunningMode.IMAGE,
     )
@@ -420,7 +475,11 @@ def _sample_video_pose(video_path: str) -> list[_PoseSample]:
         options = mp_vision.FaceLandmarkerOptions(
             base_options=mp_tasks.BaseOptions(
                 model_asset_path=str(
-                    _ensure_model(_LANDMARKER_MODEL_URL, _LANDMARKER_MODEL_PATH)
+                    _ensure_model(
+                        _LANDMARKER_MODEL_URL,
+                        _LANDMARKER_MODEL_PATH,
+                        _LANDMARKER_MODEL_SHA256,
+                    )
                 )
             ),
             running_mode=mp_vision.RunningMode.VIDEO,
