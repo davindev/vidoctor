@@ -10,11 +10,11 @@ IoU 임계는 기본 0.3, content_gap만 LLM 정밀도 낮아 0.2로 완화.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from vidoctor.eval.labels import GoldenLabel
-from vidoctor.graph.state import DIM_TO_STATE_FIELD, AnalysisState, Dimension
+from vidoctor.graph.state import Dimension
 
 Interval = tuple[float, float]
 
@@ -29,9 +29,6 @@ DIM_IOU_THRESHOLD: dict[Dimension, float] = {
     "gaze": 0.3,
     "content_gap": 0.2,
 }
-
-# IoU 대신 point-in-interval 매칭 차원.
-POINT_DIMENSIONS: frozenset[Dimension] = frozenset({"filler"})
 
 # 라벨러 1초 단위 라운딩 흡수용 ±확장.
 FILLER_TOLERANCE_SEC = 1.0
@@ -64,18 +61,6 @@ class DimensionMetrics:
     @property
     def temporal_iou_mean(self) -> float:
         return self.iou_sum / self.tp if self.tp > 0 else 0.0
-
-
-@dataclass
-class EvalReport:
-    per_dimension: dict[str, DimensionMetrics] = field(default_factory=dict)
-
-    @property
-    def macro_f1(self) -> float:
-        """평가 대상 차원의 F1 평균. 라벨도 검출도 0이라 skip된 차원은 평균 계산에서도 제외."""
-        if not self.per_dimension:
-            return 0.0
-        return sum(m.f1 for m in self.per_dimension.values()) / len(self.per_dimension)
 
 
 def iou(a: Interval, b: Interval) -> float:
@@ -144,10 +129,7 @@ def match_points_in_intervals(
 def compute_filler_metrics(
     dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
-    """filler 차원 단독 평가 — point-in-interval + ±tolerance.
-
-    compute_metrics와 scripts/filler_eval.py가 같은 산식을 공유하기 위해 분리.
-    """
+    """filler 차원 단독 평가 — point-in-interval + ±tolerance."""
     detected_starts = [e.start for e in events]
     matched_labels, matched_detected = match_points_in_intervals(
         dim_labels, detected_starts, tolerance=FILLER_TOLERANCE_SEC
@@ -219,31 +201,3 @@ def _compute_iou_metrics(
         fn=len(unmatched_lbl),
         iou_sum=sum(m[2] for m in matches),
     )
-
-
-def compute_metrics(state: AnalysisState, labels: list[GoldenLabel]) -> EvalReport:
-    """차원별 F1 + macro F1. 차원별 매칭 전략 분기.
-
-    라벨도 검출도 0인 차원은 평가 대상에서 제외 — 카테고리별 비활성 차원 자동 처리.
-    """
-    report = EvalReport()
-
-    for dim, field_name in DIM_TO_STATE_FIELD.items():
-        dim_labels: list[Interval] = [
-            (lbl.start, lbl.end) for lbl in labels if lbl.dimension == dim
-        ]
-        # 동적 키라 TypedDict 정적 검증 불가. state 값이 명시적 None일 수 있어 or [].
-        events: list[Any] = list(state.get(field_name, []) or [])  # type: ignore[literal-required]
-
-        if not dim_labels and not events:
-            continue
-
-        if dim in POINT_DIMENSIONS:
-            report.per_dimension[dim] = compute_filler_metrics(dim_labels, events)
-        elif dim == "cps":
-            cps_label_objs = [lbl for lbl in labels if lbl.dimension == "cps"]
-            report.per_dimension[dim] = compute_cps_metrics(cps_label_objs, events)
-        else:
-            report.per_dimension[dim] = _compute_iou_metrics(dim, dim_labels, events)
-
-    return report

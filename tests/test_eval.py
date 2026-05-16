@@ -6,20 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from vidoctor.eval.labels import GoldenLabel, load_labels
+from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import (
     DimensionMetrics,
-    compute_metrics,
     iou,
     match_events,
     match_points_in_intervals,
-)
-from vidoctor.graph.state import (
-    AnalysisState,
-    ContentGapEvent,
-    DeadZoneEvent,
-    FillerEvent,
-    GazeEvent,
 )
 
 # ---------------------------------------------------------------------------
@@ -182,132 +174,6 @@ def test_dimension_metrics_balanced():
 def test_dimension_metrics_zero_tp_iou_mean_is_zero():
     m = DimensionMetrics(dimension="filler", tp=0, fp=2, fn=2)
     assert m.temporal_iou_mean == 0.0
-
-
-# ---------------------------------------------------------------------------
-# compute_metrics — graph state + labels 통합
-# ---------------------------------------------------------------------------
-
-
-def _state(**fields: object) -> AnalysisState:
-    base: dict[str, object] = {"video_path": "x", "category": "lecture"}
-    base.update(fields)
-    return base  # type: ignore[return-value]
-
-
-def test_compute_metrics_skips_dimensions_with_no_label_and_no_detection():
-    state = _state(fillers=[FillerEvent(start=1.0, end=2.0, text="음")])
-    labels = [GoldenLabel(start=1.0, end=2.0, dimension="filler")]
-    report = compute_metrics(state, labels)
-    # filler만 평가, 나머지 차원은 라벨/검출 없어 skip
-    assert set(report.per_dimension.keys()) == {"filler"}
-    assert report.per_dimension["filler"].tp == 1
-    assert report.macro_f1 == 1.0
-
-
-def test_compute_metrics_filler_uses_point_in_interval():
-    # filler는 IoU가 아니라 detected 시작점이 라벨 구간 안에 있는지로 매칭.
-    # detected start=66.4가 label 45-68 안 → TP. iou_sum은 의미 없어 0.
-    state = _state(fillers=[FillerEvent(start=66.4, end=66.5, text="그")])
-    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
-    report = compute_metrics(state, labels)
-    m = report.per_dimension["filler"]
-    assert m.tp == 1
-    assert m.fp == 0
-    assert m.fn == 0
-    assert m.iou_sum == 0.0  # filler 분기는 IoU 안 씀
-
-
-def test_compute_metrics_filler_burst_with_multiple_detections_no_fp():
-    # 한 burst 라벨 안에 단발 detected 여러 개 → 모두 "검출 기여"로 묶여 FP 0, TP 1.
-    state = _state(
-        fillers=[
-            FillerEvent(start=46.0, end=46.2, text="음"),
-            FillerEvent(start=55.0, end=55.3, text="어"),
-            FillerEvent(start=66.0, end=66.4, text="그"),
-        ]
-    )
-    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
-    report = compute_metrics(state, labels)
-    m = report.per_dimension["filler"]
-    assert m.tp == 1
-    assert m.fp == 0
-    assert m.fn == 0
-
-
-def test_compute_metrics_filler_outside_label_counts_as_fp():
-    state = _state(
-        fillers=[
-            FillerEvent(start=46.0, end=46.2, text="음"),  # label 45-68 안 → TP
-            FillerEvent(start=200.0, end=200.3, text="좀"),  # label 밖 → FP
-        ]
-    )
-    labels = [GoldenLabel(start=45.0, end=68.0, dimension="filler")]
-    report = compute_metrics(state, labels)
-    m = report.per_dimension["filler"]
-    assert m.tp == 1
-    assert m.fp == 1
-    assert m.fn == 0
-
-
-def test_compute_metrics_content_gap_uses_relaxed_iou_threshold():
-    # IoU 0.27은 0.3 미달이지만 content_gap 임계 0.2엔 통과 → TP.
-    state = _state(
-        content_gaps=[ContentGapEvent(start=75.0, end=105.0, description="x")]
-    )
-    labels = [GoldenLabel(start=94.0, end=102.0, dimension="content_gap")]
-    report = compute_metrics(state, labels)
-    m = report.per_dimension["content_gap"]
-    assert m.tp == 1
-    assert m.fn == 0
-
-
-def test_compute_metrics_unmatched_label_counts_as_fn():
-    state = _state(fillers=[])
-    labels = [GoldenLabel(start=1.0, end=2.0, dimension="filler")]
-    report = compute_metrics(state, labels)
-    m = report.per_dimension["filler"]
-    assert m.tp == 0
-    assert m.fn == 1
-    assert m.fp == 0
-
-
-def test_compute_metrics_unmatched_detection_counts_as_fp():
-    state = _state(fillers=[FillerEvent(start=1.0, end=2.0, text="음")])
-    labels: list[GoldenLabel] = []
-    # filler 검출 1개, label 0개 → label/detected 둘 다 비지 않은 차원이라 평가 대상
-    report = compute_metrics(state, labels)
-    assert report.per_dimension["filler"].fp == 1
-
-
-def test_compute_metrics_macro_f1_averages_per_dimension():
-    # filler P=R=F1=1.0 (point-in-interval), gaze P=R=F1=0.0 (IoU 0) → macro 0.5
-    state = _state(
-        fillers=[FillerEvent(start=1.5, end=1.7, text="음")],
-        gaze_issues=[GazeEvent(start=10.0, end=11.0, direction="down")],
-    )
-    labels = [
-        GoldenLabel(start=1.0, end=2.0, dimension="filler"),
-        GoldenLabel(start=50.0, end=55.0, dimension="gaze"),
-    ]
-    report = compute_metrics(state, labels)
-    assert report.per_dimension["filler"].f1 == 1.0
-    assert report.per_dimension["gaze"].f1 == 0.0
-    assert report.macro_f1 == pytest.approx(0.5)
-
-
-def test_compute_metrics_multi_dimension_isolated():
-    """다른 차원의 라벨·검출이 서로 매칭되지 않아야 함."""
-    state = _state(
-        fillers=[FillerEvent(start=1.0, end=2.0, text="음")],
-        dead_zones=[DeadZoneEvent(start=1.0, end=2.0)],
-    )
-    labels = [GoldenLabel(start=1.0, end=2.0, dimension="filler")]
-    # dead_zone에는 라벨이 없는데 검출이 있어 FP 1
-    report = compute_metrics(state, labels)
-    assert report.per_dimension["filler"].tp == 1
-    assert report.per_dimension["dead_zone"].fp == 1
-    assert report.per_dimension["dead_zone"].fn == 0
 
 
 # ---------------------------------------------------------------------------
