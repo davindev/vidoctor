@@ -11,6 +11,7 @@ import asyncio
 import os
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -243,8 +244,6 @@ def test_solve_head_pose_front_facing_returns_small_yaw_pitch():
 
 def _project_rotated_model(rx_deg: float, ry_deg: float) -> tuple[np.ndarray, int, int]:
     """X·Y축 회전 후 _MODEL_POINTS를 카메라 image plane에 투영. 합성 PnP 입력."""
-    import cv2
-
     width, height = 640, 480
     focal = float(width)
     camera_matrix = np.array(

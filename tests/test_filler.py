@@ -1,3 +1,5 @@
+"""Filler 검출 테스트 — 사전 매칭 + 반복 어휘 묶음."""
+
 import pytest
 
 from tests._helpers import w

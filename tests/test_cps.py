@@ -1,3 +1,5 @@
+"""CPS(발화 속도) 이상 검출 테스트 — net speech 윈도우 σ 분석."""
+
 from tests._helpers import w
 from vidoctor.audio.cps import detect_cps_anomalies
 from vidoctor.graph.state import Word

@@ -37,21 +37,6 @@ def test_silent_intervals_pure_silence_audio():
     assert silent == [SilentInterval(0.0, 5.0)]
 
 
-def test_flow_median_in_exact_boundary_inclusive():
-    # 경계 시각이 정확히 일치할 때 양 끝이 윈도우에 포함되는지 — half-open 여부 회귀 가드.
-    curr = np.array([2.0, 3.0, 4.0])
-    flows = np.array([0.1, 0.5, 0.9])
-    # 2.0 ~ 4.0 윈도우. 양 끝 포함 시 median 0.5, 한쪽만이면 0.3 또는 0.7
-    assert flow_median_in(curr, flows, 2.0, 4.0) == pytest.approx(0.5)
-
-
-def test_flow_median_in_single_sample_window():
-    # 윈도우 안에 샘플 1개만 → median = 그 값.
-    curr = np.array([1.0, 3.0, 5.0])
-    flows = np.array([0.1, 0.7, 0.9])
-    assert flow_median_in(curr, flows, 2.5, 3.5) == pytest.approx(0.7)
-
-
 # ---------------------------------------------------------------------------
 # flow_median_in
 # ---------------------------------------------------------------------------
@@ -69,6 +54,21 @@ def test_flow_median_in_no_samples_returns_none():
     flows = np.array([0.01, 0.01])
     # 0~5s 안 샘플 없음 → None (caller가 명시적으로 가드)
     assert flow_median_in(curr, flows, 0.0, 5.0) is None
+
+
+def test_flow_median_in_exact_boundary_inclusive():
+    # 경계 시각이 정확히 일치할 때 양 끝이 윈도우에 포함되는지 — half-open 여부 회귀 가드.
+    curr = np.array([2.0, 3.0, 4.0])
+    flows = np.array([0.1, 0.5, 0.9])
+    # 2.0 ~ 4.0 윈도우. 양 끝 포함 시 median 0.5, 한쪽만이면 0.3 또는 0.7
+    assert flow_median_in(curr, flows, 2.0, 4.0) == pytest.approx(0.5)
+
+
+def test_flow_median_in_single_sample_window():
+    # 윈도우 안에 샘플 1개만 → median = 그 값.
+    curr = np.array([1.0, 3.0, 5.0])
+    flows = np.array([0.1, 0.7, 0.9])
+    assert flow_median_in(curr, flows, 2.5, 3.5) == pytest.approx(0.7)
 
 
 # ---------------------------------------------------------------------------

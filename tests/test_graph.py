@@ -1,3 +1,5 @@
+"""Graph 토폴로지 테스트 — 카테고리별 활성 차원 + stream chunk 분기."""
+
 import numpy as np
 import pytest
 
