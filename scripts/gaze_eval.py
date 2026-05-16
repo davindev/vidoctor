@@ -26,6 +26,7 @@ from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
+    eval_dump_path,
     log_mlflow_run,
     write_eval_dump,
 )
@@ -53,6 +54,7 @@ def _pose_cache_path(video_path: Path) -> Path:
         ROOT
         / "data"
         / "golden"
+        / "inputs"
         / f"gaze_pose_{video_path.stem}_{int(SAMPLE_FPS)}fps.npz"
     )
 
@@ -75,6 +77,7 @@ def _load_or_extract_pose(
     if not samples:
         _log.warning("  → 0 samples (ROI 추정 실패 — 화자 얼굴 미검출)")
         return samples
+    cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         cache,
         t=np.array([s.t for s in samples], dtype=np.float64),
@@ -291,12 +294,7 @@ def main() -> None:
     if not args.no_mlflow:
         log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
-    out = (
-        ROOT
-        / "data"
-        / "golden"
-        / f"gaze_eval_{args.video_path.stem}_{args.run_name}.json"
-    )
+    out = eval_dump_path("gaze", args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

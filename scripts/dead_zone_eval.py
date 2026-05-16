@@ -24,6 +24,7 @@ from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
+    eval_dump_path,
     log_mlflow_run,
     write_eval_dump,
 )
@@ -53,6 +54,7 @@ def _flow_cache_path(video_path: Path) -> Path:
         ROOT
         / "data"
         / "golden"
+        / "inputs"
         / f"flow_max_{video_path.stem}_{int(FRAME_SAMPLE_FPS)}fps_{DOWNSAMPLE_HEIGHT}p.npz"
     )
 
@@ -68,6 +70,7 @@ def _load_or_extract_flow(
 
     _log.info("computing optical flow for %s...", video_path.name)
     curr_t, flows, duration = flow_series(str(video_path))
+    cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(cache, curr_times=curr_t, flows=flows, duration=duration)
     _log.info("  → %d samples, duration=%.1fs (cached → %s)", len(flows), duration, cache.name)
     return curr_t, flows, duration
@@ -202,12 +205,7 @@ def main() -> None:
     if not args.no_mlflow:
         log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
-    out = (
-        ROOT
-        / "data"
-        / "golden"
-        / f"dead_zone_eval_{args.video_path.stem}_{args.run_name}.json"
-    )
+    out = eval_dump_path("dead_zone", args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

@@ -96,7 +96,7 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"[smoke] graph done in {elapsed:.1f}s")
 
-    out_path = ROOT / "data" / "golden" / f"smoke_{Path(video_path).stem}.json"
+    out_path = ROOT / "data" / "golden" / "eval_dumps" / "smoke" / f"{Path(video_path).stem}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {

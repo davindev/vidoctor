@@ -44,8 +44,8 @@ def _build_invocation(
     cmd = [
         sys.executable,
         str(ROOT / "scripts" / script),
-        str(ROOT / "data" / "golden" / f"{video_name}.mp4"),
-        str(ROOT / "data" / "golden" / f"{video_name}_labels.csv"),
+        str(ROOT / "data" / "golden" / "inputs" / f"{video_name}.mp4"),
+        str(ROOT / "data" / "golden" / "labels" / f"{video_name}_labels.csv"),
     ]
     if script == "dead_zone_eval.py":
         cmd.append(category)

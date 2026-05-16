@@ -316,8 +316,8 @@ def test_compute_metrics_multi_dimension_isolated():
 
 
 def test_load_labels_real_lecture_csv_if_exists():
-    """data/golden/lecture_labels.csv가 있으면 파싱 검증."""
-    path = Path("data/golden/lecture_labels.csv")
+    """data/golden/labels/lecture_labels.csv가 있으면 파싱 검증."""
+    path = Path("data/golden/labels/lecture_labels.csv")
     if not path.exists():
         pytest.skip(f"missing fixture: {path}")
     labels = load_labels(path)

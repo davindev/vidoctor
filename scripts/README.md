@@ -2,6 +2,29 @@
 
 `src/vidoctor/`가 *프로덕션 파이프라인*이라면 `scripts/`는 그 위의 *평가·진단 인프라*다. 모든 임계값 튜닝 의사결정의 정량적 근거가 여기서 나온다.
 
+## 데이터 폴더 (`data/golden/`)
+
+```
+data/golden/
+├── labels/                  ← 사람이 라벨링한 정답 CSV (소수, 안정)
+│   ├── lecture_labels.csv
+│   └── vlog_labels.csv
+├── inputs/                  ← 영상 + 캐시된 feature (입력·재계산 가능)
+│   ├── lecture.mp4, vlog.mp4
+│   ├── transcript_*.json    (WhisperX ASR 캐시)
+│   ├── f0_*.npz             (librosa pYIN F0)
+│   ├── flow_max_*.npz       (Farneback optical flow)
+│   ├── gaze_pose_*.npz      (MediaPipe head pose)
+│   └── lecture_t*.png       (정지컷)
+└── eval_dumps/              ← 평가 결과 JSON (대량, 누적)
+    ├── filler/
+    ├── cps/
+    ├── dead_zone/
+    ├── gaze/
+    ├── content_gap/
+    └── smoke/
+```
+
 ## 파일 지도
 
 | 파일 | 목적 | 비싼 호출 | 캐시 |
@@ -40,8 +63,8 @@ optional:    --no-cache   (transcript/feature 캐시 무시)
         │
         ▼
 2. 차원별 평가:
-   uv run python scripts/cps_eval.py data/golden/lecture.mp4 \
-       data/golden/lecture_labels.csv --run-name stage16_tighter
+   uv run python scripts/cps_eval.py data/golden/inputs/lecture.mp4 \
+       data/golden/labels/lecture_labels.csv --run-name stage16_tighter
         │
         ▼
 3. 산출물 자동 생성:

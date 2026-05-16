@@ -41,6 +41,7 @@ from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
+    eval_dump_path,
     load_or_transcribe,
     log_mlflow_run,
     model_tag,
@@ -68,7 +69,7 @@ def _metrics_dict(cps_labels, events) -> dict[str, float]:
 
 
 def _f0_cache_path(video_path: Path) -> Path:
-    return ROOT / "data" / "golden" / f"f0_{video_path.stem}.npz"
+    return ROOT / "data" / "golden" / "inputs" / f"f0_{video_path.stem}.npz"
 
 
 def _load_or_extract_pitch(video_path: Path, no_cache: bool):
@@ -80,6 +81,7 @@ def _load_or_extract_pitch(video_path: Path, no_cache: bool):
         return d["f0"], d["times"]
     _log.info("extracting F0 from %s...", video_path.name)
     f0, times = extract_pitch_track(str(video_path))
+    cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(cache, f0=f0, times=times)
     _log.info("  → %d frames (cached → %s)", len(f0), cache.name)
     return f0, times
@@ -149,7 +151,7 @@ def main() -> None:
     if not args.no_mlflow:
         log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
-    out = ROOT / "data" / "golden" / f"cps_eval_{args.video_path.stem}_{args.run_name}.json"
+    out = eval_dump_path("cps", args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

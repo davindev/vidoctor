@@ -18,10 +18,10 @@ import asyncio
 import logging
 from typing import cast
 
-from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
+    eval_dump_path,
     load_or_transcribe,
     log_mlflow_run,
     write_eval_dump,
@@ -164,12 +164,7 @@ def main() -> None:
     if not args.no_mlflow:
         log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
-    out = (
-        ROOT
-        / "data"
-        / "golden"
-        / f"content_gap_eval_{args.video_path.stem}_{args.run_name}.json"
-    )
+    out = eval_dump_path("content_gap", args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

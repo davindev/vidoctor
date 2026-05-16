@@ -45,6 +45,8 @@ _log = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_DIR = _ROOT / "data" / "golden"
+_INPUTS_DIR = _GOLDEN_DIR / "inputs"
+_EVAL_DUMPS_DIR = _GOLDEN_DIR / "eval_dumps"
 
 
 def build_eval_parser(description: str) -> argparse.ArgumentParser:
@@ -110,7 +112,16 @@ def model_tag() -> str:
 
 
 def transcript_cache_path(video_path: Path) -> Path:
-    return _GOLDEN_DIR / f"transcript_{video_path.stem}_{model_tag()}.json"
+    return _INPUTS_DIR / f"transcript_{video_path.stem}_{model_tag()}.json"
+
+
+def eval_dump_path(dimension: str, video_stem: str, run_name: str) -> Path:
+    """차원별 평가 dump 경로. eval_dumps/{dim}/{video}_{run_name}.json.
+
+    상위 폴더는 write_eval_dump가 mkdir(parents=True). 차원 prefix는 폴더가
+    분리하므로 파일명에서 제거 — `eval_dumps/cps/lecture_stage11.json`.
+    """
+    return _EVAL_DUMPS_DIR / dimension / f"{video_stem}_{run_name}.json"
 
 
 def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
@@ -123,6 +134,7 @@ def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
 
     _log.info("transcribing %s...", video_path.name)
     words, _ = asyncio.run(transcribe_video(str(video_path)))
+    cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(
         json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
     )
