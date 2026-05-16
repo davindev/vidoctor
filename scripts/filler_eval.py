@@ -13,12 +13,14 @@ transcript는 영상별 JSON에 캐시되어 사전 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
-import json
-import sys
-
 from vidoctor.audio.filler import detect_filler_events
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import build_eval_parser, load_or_transcribe, log_mlflow_run
+from vidoctor.eval._script_lib import (
+    build_eval_parser,
+    load_or_transcribe,
+    log_mlflow_run,
+    write_eval_dump,
+)
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_filler_metrics
 
@@ -41,11 +43,6 @@ def _metrics_dict(label_intervals, events) -> dict[str, float]:
 def main() -> None:
     parser = build_eval_parser("filler P/R/F1 + MLflow logging")
     args = parser.parse_args()
-
-    if not args.video_path.exists():
-        sys.exit(f"video not found: {args.video_path}")
-    if not args.labels_csv.exists():
-        sys.exit(f"labels not found: {args.labels_csv}")
 
     words = load_or_transcribe(args.video_path, args.no_cache)
 
@@ -75,29 +72,27 @@ def main() -> None:
         )
 
     out = ROOT / "data" / "golden" / f"filler_eval_{args.video_path.stem}_{args.run_name}.json"
-    out.write_text(
-        json.dumps(
-            {
-                "video": args.video_path.name,
-                "run_name": args.run_name,
-                "metrics": metrics,
-                "detected": [{"start": e.start, "end": e.end, "text": e.text} for e in events],
-                "labels": filler_labels,
-                "label_time_tokens": [
-                    {
-                        "label": [ls, le],
-                        "tokens": [
-                            {"start": w.start, "end": w.end, "text": w.text}
-                            for w in words
-                            if ls <= w.start < le
-                        ],
-                    }
-                    for ls, le in filler_labels
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    write_eval_dump(
+        out,
+        {
+            "video": args.video_path.name,
+            "run_name": args.run_name,
+            "metrics": metrics,
+            "detected": [{"start": e.start, "end": e.end, "text": e.text} for e in events],
+            "labels": filler_labels,
+            "label_time_tokens": [
+                {
+                    "label": [ls, le],
+                    "tokens": [
+                        {"start": w.start, "end": w.end, "text": w.text}
+                        for w in words
+                        if ls <= w.start < le
+                    ],
+                }
+                for ls, le in filler_labels
+            ],
+        },
+        force=args.force,
     )
     print(f"  → dumped {out.name}")
 

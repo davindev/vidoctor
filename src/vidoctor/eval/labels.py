@@ -25,15 +25,33 @@ class GoldenLabel(BaseModel):
     note: str = ""
 
 
+_REQUIRED_COLUMNS = frozenset({"start", "end", "dimension"})
+_KNOWN_COLUMNS = frozenset({"start", "end", "dimension", "kind", "note"})
+
+
 def load_labels(csv_path: Path | str) -> list[GoldenLabel]:
     """CSV → list[GoldenLabel]. 빈 행/주석은 무시. 파일 없으면 FileNotFoundError.
 
-    dimension Literal 검증은 Pydantic이 수행 — 잘못된 값은 ValidationError.
+    헤더 검증: start/end/dimension 컬럼 없으면 ValueError로 즉시 abort — 비싼 ASR
+    호출 *전*에 입력 사양 실패. dimension Literal 검증은 Pydantic이 수행.
     """
     path = Path(csv_path)
     labels: list[GoldenLabel] = []
     with path.open(encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        fields = frozenset(reader.fieldnames or ())
+        missing = _REQUIRED_COLUMNS - fields
+        if missing:
+            raise ValueError(
+                f"labels CSV {path.name} missing required columns: {sorted(missing)} "
+                f"(found: {sorted(fields)})"
+            )
+        unknown = fields - _KNOWN_COLUMNS
+        if unknown:
+            raise ValueError(
+                f"labels CSV {path.name} has unknown columns: {sorted(unknown)} "
+                f"(expected subset of: {sorted(_KNOWN_COLUMNS)})"
+            )
         for row in reader:
             if not row.get("start") or not row.get("dimension"):
                 continue

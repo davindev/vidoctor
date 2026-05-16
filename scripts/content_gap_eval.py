@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from pathlib import Path
 from typing import cast
@@ -27,6 +26,7 @@ from vidoctor.eval._script_lib import (
     build_eval_parser,
     load_or_transcribe,
     log_mlflow_run,
+    write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
@@ -156,11 +156,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.video_path.exists():
-        sys.exit(f"video not found: {args.video_path}")
-    if not args.labels_csv.exists():
-        sys.exit(f"labels not found: {args.labels_csv}")
-
     transcript = load_or_transcribe(args.video_path, args.no_cache)
 
     print(f"sampling frames + invoking {args.model}...")
@@ -242,34 +237,32 @@ def main() -> None:
         / "golden"
         / f"content_gap_eval_{args.video_path.stem}_{args.run_name}.json"
     )
-    out.write_text(
-        json.dumps(
-            {
-                "video": args.video_path.name,
-                "run_name": args.run_name,
-                "params": params,
-                "metrics": metrics,
-                "frame_samples": [
-                    {
-                        "time_sec": round(s.time_sec, 2),
-                        "transcript_text": s.transcript_text,
-                    }
-                    for s in samples
-                ],
-                "detected": [
-                    {"start": e.start, "end": e.end, "description": e.description}
-                    for e in events
-                ],
-                "issues_raw": result["issues_raw"],
-                "labels": [
-                    {"start": lbl.start, "end": lbl.end, "note": lbl.note}
-                    for lbl in cg_labels
-                ],
-                "label_diagnostics": diag,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    write_eval_dump(
+        out,
+        {
+            "video": args.video_path.name,
+            "run_name": args.run_name,
+            "params": params,
+            "metrics": metrics,
+            "frame_samples": [
+                {
+                    "time_sec": round(s.time_sec, 2),
+                    "transcript_text": s.transcript_text,
+                }
+                for s in samples
+            ],
+            "detected": [
+                {"start": e.start, "end": e.end, "description": e.description}
+                for e in events
+            ],
+            "issues_raw": result["issues_raw"],
+            "labels": [
+                {"start": lbl.start, "end": lbl.end, "note": lbl.note}
+                for lbl in cg_labels
+            ],
+            "label_diagnostics": diag,
+        },
+        force=args.force,
     )
     print(f"  → dumped {out.name}")
 

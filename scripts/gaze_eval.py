@@ -17,14 +17,12 @@ pose 시계열은 영상·ROI 추정·SAMPLE_FPS 동일하면 결정적이라 np
 
 from __future__ import annotations
 
-import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import build_eval_parser, log_mlflow_run
+from vidoctor.eval._script_lib import build_eval_parser, log_mlflow_run, write_eval_dump
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
 from vidoctor.vision.gaze import (
@@ -220,11 +218,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.video_path.exists():
-        sys.exit(f"video not found: {args.video_path}")
-    if not args.labels_csv.exists():
-        sys.exit(f"labels not found: {args.labels_csv}")
-
     yaw_thr = args.yaw_threshold if args.yaw_threshold is not None else YAW_THRESHOLD_DEG
     pitch_thr = (
         args.pitch_threshold if args.pitch_threshold is not None else PITCH_THRESHOLD_DEG
@@ -296,27 +289,25 @@ def main() -> None:
         / "golden"
         / f"gaze_eval_{args.video_path.stem}_{args.run_name}.json"
     )
-    out.write_text(
-        json.dumps(
-            {
-                "video": args.video_path.name,
-                "run_name": args.run_name,
-                "params": params,
-                "metrics": metrics,
-                "pose_summary": pose_summary,
-                "detected": [
-                    {"start": e.start, "end": e.end, "direction": e.direction}
-                    for e in events
-                ],
-                "labels": [
-                    {"start": lbl.start, "end": lbl.end, "note": lbl.note}
-                    for lbl in gaze_labels
-                ],
-                "label_diagnostics": diag,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    write_eval_dump(
+        out,
+        {
+            "video": args.video_path.name,
+            "run_name": args.run_name,
+            "params": params,
+            "metrics": metrics,
+            "pose_summary": pose_summary,
+            "detected": [
+                {"start": e.start, "end": e.end, "direction": e.direction}
+                for e in events
+            ],
+            "labels": [
+                {"start": lbl.start, "end": lbl.end, "note": lbl.note}
+                for lbl in gaze_labels
+            ],
+            "label_diagnostics": diag,
+        },
+        force=args.force,
     )
     print(f"  → dumped {out.name}")
 

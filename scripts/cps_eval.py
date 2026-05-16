@@ -15,9 +15,7 @@ transcript는 영상별 JSON에 캐시되어 임계 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
-import json
 import statistics
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +42,7 @@ from vidoctor.eval._script_lib import (
     load_or_transcribe,
     log_mlflow_run,
     model_tag,
+    write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_cps_metrics
@@ -91,11 +90,6 @@ def main() -> None:
         help="F0 multi-feature 비활성화 (cps z-score 단독 — 비교 측정용)",
     )
     args = parser.parse_args()
-
-    if not args.video_path.exists():
-        sys.exit(f"video not found: {args.video_path}")
-    if not args.labels_csv.exists():
-        sys.exit(f"labels not found: {args.labels_csv}")
 
     words = load_or_transcribe(args.video_path, args.no_cache)
 
@@ -152,43 +146,41 @@ def main() -> None:
         log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
 
     out = ROOT / "data" / "golden" / f"cps_eval_{args.video_path.stem}_{args.run_name}.json"
-    out.write_text(
-        json.dumps(
-            {
-                "video": args.video_path.name,
-                "run_name": args.run_name,
-                "params": params,
-                "metrics": metrics,
-                "detected": [
-                    {"start": e.start, "end": e.end, "cps": e.cps, "kind": e.kind}
-                    for e in events
-                ],
-                "labels": [
-                    {"start": lbl.start, "end": lbl.end, "kind": lbl.kind, "note": lbl.note}
-                    for lbl in cps_labels
-                ],
-                "label_time_windows": [
-                    {
-                        "label": {"start": lbl.start, "end": lbl.end, "kind": lbl.kind},
-                        "windows_in_range": [
-                            {
-                                "start": w.start,
-                                "end": w.end,
-                                "cps": round(w.cps, 3),
-                                "z": round((w.cps - win_mean) / win_std, 3)
-                                if win_std > 0
-                                else 0.0,
-                            }
-                            for w in windows
-                            if w.end > lbl.start - 1.0 and w.start < lbl.end + 1.0
-                        ],
-                    }
-                    for lbl in cps_labels
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    write_eval_dump(
+        out,
+        {
+            "video": args.video_path.name,
+            "run_name": args.run_name,
+            "params": params,
+            "metrics": metrics,
+            "detected": [
+                {"start": e.start, "end": e.end, "cps": e.cps, "kind": e.kind}
+                for e in events
+            ],
+            "labels": [
+                {"start": lbl.start, "end": lbl.end, "kind": lbl.kind, "note": lbl.note}
+                for lbl in cps_labels
+            ],
+            "label_time_windows": [
+                {
+                    "label": {"start": lbl.start, "end": lbl.end, "kind": lbl.kind},
+                    "windows_in_range": [
+                        {
+                            "start": w.start,
+                            "end": w.end,
+                            "cps": round(w.cps, 3),
+                            "z": round((w.cps - win_mean) / win_std, 3)
+                            if win_std > 0
+                            else 0.0,
+                        }
+                        for w in windows
+                        if w.end > lbl.start - 1.0 and w.start < lbl.end + 1.0
+                    ],
+                }
+                for lbl in cps_labels
+            ],
+        },
+        force=args.force,
     )
     print(f"  → dumped {out.name}")
 

@@ -26,10 +26,11 @@ _GOLDEN_DIR = _ROOT / "data" / "golden"
 
 def build_eval_parser(description: str) -> argparse.ArgumentParser:
     """5개 차원 평가 스크립트 공통 인자(video_path · labels_csv · --run-name ·
-    --no-cache · --no-mlflow). 차원별 추가 인자는 호출자가 parser에 더 add_argument."""
+    --no-cache · --no-mlflow · --force). 차원별 추가 인자는 호출자가 parser에 더
+    add_argument."""
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("video_path", type=Path)
-    parser.add_argument("labels_csv", type=Path)
+    parser.add_argument("video_path", type=_existing_file)
+    parser.add_argument("labels_csv", type=_existing_file)
     parser.add_argument(
         "--run-name",
         required=True,
@@ -45,7 +46,33 @@ def build_eval_parser(description: str) -> argparse.ArgumentParser:
         action="store_true",
         help="MLflow 로그 생략 (디버그용)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="기존 평가 dump JSON 덮어쓰기 허용 (default: 충돌 시 abort)",
+    )
     return parser
+
+
+def _existing_file(raw: str) -> Path:
+    """argparse type validator — 존재하는 파일만 통과. 평가 시작 직전에 즉시 실패."""
+    p = Path(raw)
+    if not p.exists():
+        raise argparse.ArgumentTypeError(f"file not found: {raw}")
+    if not p.is_file():
+        raise argparse.ArgumentTypeError(f"not a file: {raw}")
+    return p
+
+
+def write_eval_dump(out_path: Path, data: dict, *, force: bool) -> None:
+    """평가 결과 JSON dump. 기존 파일 존재 시 force가 없으면 abort — 의도치 않은
+    덮어쓰기로 옛 detected/labels 본문이 소실되는 사고 방지."""
+    if out_path.exists() and not force:
+        raise FileExistsError(
+            f"이미 존재합니다: {out_path}. --force로 덮어쓰거나 다른 --run-name 사용."
+        )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def model_tag() -> str:
