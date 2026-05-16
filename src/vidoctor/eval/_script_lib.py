@@ -1,7 +1,7 @@
-"""평가 스크립트 공용 유틸 — argparse · 로깅 · ASR 캐시 · MLflow.
+"""평가 스크립트 공용 유틸 — argparse · 로깅 · 라벨 · 캐시 · 메트릭 · MLflow.
 
 5개 차원 *_eval.py가 공유하는 헬퍼: 공통 인자 파서, run_name 접두 로깅, 입력 파일
-검증, 평가 결과 JSON 안전 저장, ASR 캐시 로드, MLflow 기록.
+검증, 라벨 필터, ASR 캐시 로드, metrics dict 변환, 평가 JSON 저장, MLflow 기록.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import mlflow
 
 from vidoctor.audio.transcribe import transcribe_video
 from vidoctor.config import ROOT, get_settings
+from vidoctor.eval.labels import GoldenLabel
 from vidoctor.eval.metrics import DimensionMetrics
 from vidoctor.graph.state import Word
 
@@ -107,6 +108,21 @@ def transcript_cache_path(video_path: Path) -> Path:
 def eval_dump_path(dimension: str, video_stem: str, run_name: str) -> Path:
     """차원별 평가 결과 JSON 경로를 반환한다."""
     return _EVAL_DUMPS_DIR / dimension / f"{video_stem}_{run_name}.json"
+
+
+def experiment_name(dimension: str) -> str:
+    """차원별 MLflow 실험 이름 (vidoctor-<dim>)을 반환한다."""
+    return f"vidoctor-{dimension}"
+
+
+def filter_labels_by_dim(
+    labels: list[GoldenLabel], dimension: str
+) -> list[GoldenLabel]:
+    """라벨에서 해당 차원만 필터. 0개면 warning 로그."""
+    filtered = [lbl for lbl in labels if lbl.dimension == dimension]
+    if not filtered:
+        _log.warning("%s 라벨이 0개입니다", dimension)
+    return filtered
 
 
 def metrics_to_dict(m: DimensionMetrics, *, include_iou: bool = True) -> dict[str, float]:

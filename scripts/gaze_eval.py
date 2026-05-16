@@ -1,18 +1,8 @@
-"""gaze 차원만 평가 — face landmark/head pose 시계열만 추출해 P/R/F1 측정 + MLflow 기록.
-
-MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose로 yaw/pitch 시계열을 만들고,
-영상 전체 median을 정면 baseline으로 차감해 deviation 임계로 시선 이탈 frame을 묶은
-GazeEvent를 라벨과 IoU 매칭한다.
-
-매칭은 IoU greedy 1:1 (IoU 임계 0.3, dead_zone과 동일).
-
-pose 시계열은 영상·ROI 추정·SAMPLE_FPS 동일하면 결정적이라 npz 캐시한다 — 임계만 바꿔
-재실행할 때 ROI 추정 + landmark 추출(가장 무거운 단계)을 건너뛴다.
-캐시 무효화는 --no-cache 옵션 또는 캐시 파일 삭제.
+"""gaze 차원 단독 평가 — MediaPipe head pose + baseline 차감 + P/R/F1 + MLflow 기록.
 
 사용법:
-    uv run python scripts/gaze_eval.py data/golden/lecture.mp4 \\
-        data/golden/lecture_labels.csv --run-name baseline_lecture
+    uv run python scripts/gaze_eval.py data/golden/inputs/lecture.mp4 \\
+        data/golden/labels/lecture_labels.csv --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -27,6 +17,8 @@ from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
     eval_dump_path,
+    experiment_name,
+    filter_labels_by_dim,
     log_mlflow_run,
     metrics_to_dict,
     write_eval_dump,
@@ -47,7 +39,7 @@ from vidoctor.vision.gaze import (
 )
 
 _log = logging.getLogger(__name__)
-_EXPERIMENT_NAME = "vidoctor-gaze"
+_DIMENSION = "gaze"
 
 
 def _pose_cache_path(video_path: Path) -> Path:
@@ -250,7 +242,7 @@ def main() -> None:
     events = _detect_with_thresholds(samples, yaw_thr, pitch_thr, min_dur, merge_gap)
 
     labels = load_labels(args.labels_csv)
-    gaze_labels = [lbl for lbl in labels if lbl.dimension == "gaze"]
+    gaze_labels = filter_labels_by_dim(labels, _DIMENSION)
     gaze_intervals = [(lbl.start, lbl.end) for lbl in gaze_labels]
 
     m = _compute_iou_metrics("gaze", gaze_intervals, events)
@@ -277,7 +269,7 @@ def main() -> None:
         "min_duration_sec": min_dur,
         "merge_gap_sec": merge_gap,
         "sample_fps": SAMPLE_FPS,
-        "iou_threshold": DIM_IOU_THRESHOLD["gaze"],
+        "iou_threshold": DIM_IOU_THRESHOLD[_DIMENSION],
         "pose_sample_count": len(samples),
         "baseline_subtracted": not args.no_baseline,
         "baseline_yaw": round(baseline_yaw, 3),
@@ -285,9 +277,11 @@ def main() -> None:
     }
 
     if not args.no_mlflow:
-        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
+        log_mlflow_run(
+            experiment_name(_DIMENSION), args.run_name, params=params, metrics=metrics
+        )
 
-    out = eval_dump_path("gaze", args.video_path.stem, args.run_name)
+    out = eval_dump_path(_DIMENSION, args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

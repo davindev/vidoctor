@@ -1,15 +1,8 @@
-"""content_gap 차원만 평가 — frame sampling + GPT-4o 호출 후 P/R/F1 + 비용·latency 측정.
-
-content_gap은 LLM 1회 호출이라 baseline 측정이 곧 진단이다. 이 스크립트는:
-  1. transcript 캐시 로드(없으면 추출) — filler_eval과 동일 캐시 파일 재활용
-  2. content_gap.detect_with_diagnostics를 호출 — production 흐름과 동일한 진입점,
-     raw response·token usage·latency까지 함께 받음
-  3. 라벨 시간대에 들어간 frame 시각·transcript 텍스트·LLM 출력 reasoning 모두 dump
-  4. MLflow에 P/R/F1 + LLM 호출 비용·latency·prompt_tokens 기록
+"""content_gap 차원 단독 평가 — GPT-4o Vision 호출 + P/R/F1 + 비용·latency + MLflow.
 
 사용법:
-    uv run python scripts/content_gap_eval.py data/golden/lecture.mp4 \\
-        data/golden/lecture_labels.csv --run-name baseline_lecture
+    uv run python scripts/content_gap_eval.py data/golden/inputs/lecture.mp4 \\
+        data/golden/labels/lecture_labels.csv --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -22,6 +15,8 @@ from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
     eval_dump_path,
+    experiment_name,
+    filter_labels_by_dim,
     load_or_transcribe,
     log_mlflow_run,
     metrics_to_dict,
@@ -42,7 +37,7 @@ from vidoctor.vision.content_gap import (
 )
 
 _log = logging.getLogger(__name__)
-_EXPERIMENT_NAME = "vidoctor-content_gap"
+_DIMENSION = "content_gap"
 
 
 def _label_diagnostics(
@@ -106,7 +101,7 @@ def main() -> None:
     events = diag.events
 
     labels = load_labels(args.labels_csv)
-    cg_labels = [lbl for lbl in labels if lbl.dimension == "content_gap"]
+    cg_labels = filter_labels_by_dim(labels, _DIMENSION)
     cg_intervals = [(lbl.start, lbl.end) for lbl in cg_labels]
 
     m = _compute_iou_metrics("content_gap", cg_intervals, events)
@@ -141,24 +136,26 @@ def main() -> None:
 
     params = {
         "video": args.video_path.name,
-        "category": args.category,
-        "model": args.model,
         "label_count": len(cg_labels),
         "detected_count": len(events),
+        "category": args.category,
+        "model": args.model,
         "sample_interval_sec": SAMPLE_INTERVAL_SEC,
         "transcript_window_sec": TRANSCRIPT_WINDOW_SEC,
         "max_samples": MAX_SAMPLES,
         "max_frame_height": MAX_FRAME_HEIGHT,
         "jpeg_quality": JPEG_QUALITY,
         "scene_dedup_threshold_sec": SCENE_DEDUP_THRESHOLD_SEC,
-        "iou_threshold": DIM_IOU_THRESHOLD["content_gap"],
+        "iou_threshold": DIM_IOU_THRESHOLD[_DIMENSION],
         "image_count": len(samples),
     }
 
     if not args.no_mlflow:
-        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
+        log_mlflow_run(
+            experiment_name(_DIMENSION), args.run_name, params=params, metrics=metrics
+        )
 
-    out = eval_dump_path("content_gap", args.video_path.stem, args.run_name)
+    out = eval_dump_path(_DIMENSION, args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

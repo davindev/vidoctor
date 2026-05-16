@@ -1,16 +1,8 @@
-"""dead_zone 차원만 평가 — content_gap(GPT-4o) 호출 없이 P/R/F1 측정 + MLflow 기록.
-
-VAD(Silero) + SSIM 시계열 + 시간 가드로 검출. 라벨 vs 검출 매칭 + 라벨 시간대 SSIM 누적
-정적 시간·VAD silent coverage 진단 dump해 임계·결합 정책 의사결정 자료를 만든다.
-
-매칭은 IoU greedy 1:1 (IoU 임계 0.3).
-
-SSIM 시계열은 영상·다운스케일·fps 동일하면 결정적이라 npz 캐시.
-캐시 무효화는 --no-cache 옵션 또는 캐시 파일 삭제.
+"""dead_zone 차원 단독 평가 — Silero VAD + Farneback flow 게이트 + P/R/F1 + MLflow 기록.
 
 사용법:
-    uv run python scripts/dead_zone_eval.py data/golden/lecture.mp4 \\
-        data/golden/lecture_labels.csv lecture --run-name baseline_lecture
+    uv run python scripts/dead_zone_eval.py data/golden/inputs/lecture.mp4 \\
+        data/golden/labels/lecture_labels.csv lecture --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -25,6 +17,8 @@ from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
     eval_dump_path,
+    experiment_name,
+    filter_labels_by_dim,
     log_mlflow_run,
     metrics_to_dict,
     write_eval_dump,
@@ -46,7 +40,7 @@ from vidoctor.vision.dead_zone import (
 )
 
 _log = logging.getLogger(__name__)
-_EXPERIMENT_NAME = "vidoctor-dead_zone"
+_DIMENSION = "dead_zone"
 
 
 def _flow_cache_path(video_path: Path) -> Path:
@@ -164,7 +158,7 @@ def main() -> None:
     events = _detect(silent, curr_times, flows, min_duration, flow_threshold)
 
     labels = load_labels(args.labels_csv)
-    dz_labels = [lbl for lbl in labels if lbl.dimension == "dead_zone"]
+    dz_labels = filter_labels_by_dim(labels, _DIMENSION)
     dz_intervals = [(lbl.start, lbl.end) for lbl in dz_labels]
 
     m = _compute_iou_metrics("dead_zone", dz_intervals, events)
@@ -182,23 +176,25 @@ def main() -> None:
 
     params = {
         "video": args.video_path.name,
-        "category": category,
         "label_count": len(dz_labels),
         "detected_count": len(events),
+        "category": category,
         "video_duration": round(duration, 2),
         "min_duration_sec": min_duration,
         "flow_threshold": flow_threshold,
         "vad_min_silence_ms": VAD_MIN_SILENCE_MS,
         "frame_sample_fps": FRAME_SAMPLE_FPS,
         "downsample_height": DOWNSAMPLE_HEIGHT,
-        "iou_threshold": DIM_IOU_THRESHOLD["dead_zone"],
+        "iou_threshold": DIM_IOU_THRESHOLD[_DIMENSION],
         "silent_interval_count": len(silent),
     }
 
     if not args.no_mlflow:
-        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
+        log_mlflow_run(
+            experiment_name(_DIMENSION), args.run_name, params=params, metrics=metrics
+        )
 
-    out = eval_dump_path("dead_zone", args.video_path.stem, args.run_name)
+    out = eval_dump_path(_DIMENSION, args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {

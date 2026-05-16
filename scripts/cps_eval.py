@@ -1,16 +1,8 @@
-"""cps 차원만 평가 — content_gap(GPT-4o) 호출 없이 P/R/F1 측정 + MLflow 기록.
-
-transcribe + detect_cps_anomalies만 돌려, 라벨 vs 검출 매칭 + 윈도우 통계
-(mean·std·이상 비율)를 함께 dump해 σ 임계·윈도우 길이·평탄 가드 의사결정 자료를 만든다.
-
-매칭은 `compute_cps_metrics`(라벨 ±1s 확장 IoU + kind 일치 필수)와 동일.
-
-transcript는 영상별 JSON에 캐시되어 임계 튜닝 반복 시 transcribe 재실행 회피.
-캐시 무효화는 --no-cache 옵션 또는 캐시 파일 삭제.
+"""cps 차원 단독 평가 — P/R/F1 + 윈도우 통계 + F0 multi-feature + MLflow 기록.
 
 사용법:
-    uv run python scripts/cps_eval.py data/golden/vlog.mp4 \\
-        data/golden/vlog_labels.csv --run-name baseline_vlog
+    uv run python scripts/cps_eval.py data/golden/inputs/vlog.mp4 \\
+        data/golden/labels/vlog_labels.csv --run-name baseline_vlog
 """
 
 from __future__ import annotations
@@ -42,6 +34,8 @@ from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
     eval_dump_path,
+    experiment_name,
+    filter_labels_by_dim,
     load_or_transcribe,
     log_mlflow_run,
     metrics_to_dict,
@@ -52,7 +46,7 @@ from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_cps_metrics
 
 _log = logging.getLogger(__name__)
-_EXPERIMENT_NAME = "vidoctor-cps"
+_DIMENSION = "cps"
 
 
 def _f0_cache_path(video_path: Path) -> Path:
@@ -101,7 +95,7 @@ def main() -> None:
     events = detect_cps_anomalies(words, pitch_features=pitch_features)
 
     labels = load_labels(args.labels_csv)
-    cps_labels = [lbl for lbl in labels if lbl.dimension == "cps"]
+    cps_labels = filter_labels_by_dim(labels, _DIMENSION)
 
     metrics = metrics_to_dict(compute_cps_metrics(cps_labels, events))
     _log.info(
@@ -136,9 +130,11 @@ def main() -> None:
         params["f0_and_sigma"] = F0_AND_SIGMA
 
     if not args.no_mlflow:
-        log_mlflow_run(_EXPERIMENT_NAME, args.run_name, params=params, metrics=metrics)
+        log_mlflow_run(
+            experiment_name(_DIMENSION), args.run_name, params=params, metrics=metrics
+        )
 
-    out = eval_dump_path("cps", args.video_path.stem, args.run_name)
+    out = eval_dump_path(_DIMENSION, args.video_path.stem, args.run_name)
     write_eval_dump(
         out,
         {
