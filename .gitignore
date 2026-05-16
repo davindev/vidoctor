@@ -32,6 +32,7 @@ build/
 .vscode/
 .idea/
 .cursor/
+.claude/
 .DS_Store
 
 # Tool caches
@@ -39,10 +40,6 @@ build/
 .mypy_cache/
 .pyright/
 
-# MLflow / Langfuse local
+# MLflow local
 mlruns/
 mlflow.db
-
-# Streamlit
-.streamlit/secrets.toml
-.claude/
