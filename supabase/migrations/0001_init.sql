@@ -68,7 +68,4 @@ insert into storage.buckets (id, name, public)
 values ('videos', 'videos', false)
 on conflict (id) do nothing;
 
--- 참고:
--- - RLS는 현재 비활성. service_role key로만 접근 (단일 사용자 데모 가정).
---   v1.1에서 인증 도입 시 RLS 정책 추가.
--- - pgvector는 v1.1에서 활성화 예정 (RAG 도입 시).
+-- 참고: RLS 비활성. service_role key로만 접근 (단일 사용자 데모 가정).
