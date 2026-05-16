@@ -348,3 +348,21 @@ def test_load_labels_synthetic_csv(tmp_path: Path):
 def test_load_labels_missing_file_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         load_labels(tmp_path / "nope.csv")
+
+
+def test_load_labels_raises_on_missing_required_column(tmp_path: Path):
+    # 비싼 ASR 호출 전에 헤더 검증으로 abort하는지 — fail-fast 회귀 가드.
+    csv_path = tmp_path / "bad.csv"
+    csv_path.write_text("start,end,note\n1.0,2.0,foo\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="필수 컬럼이 빠졌습니다"):
+        load_labels(csv_path)
+
+
+def test_load_labels_raises_on_unknown_column(tmp_path: Path):
+    # 오타·미지의 컬럼은 즉시 reject — 라벨러 실수 조기 발견.
+    csv_path = tmp_path / "bad.csv"
+    csv_path.write_text(
+        "start,end,dimension,extra\n1.0,2.0,filler,x\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="알 수 없는 컬럼"):
+        load_labels(csv_path)
