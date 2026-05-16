@@ -67,8 +67,7 @@ v1.0 MVP는 차원별 검출(이상 구간 감지)에 집중. severity 차등과
 - Storage signed URL 직접 업로드 (현재 백엔드 경유로 R2 PutObject)
 - DeepEval + Cohen's κ — 라벨러 ≥ 2명 전제
 - Label Studio 연동 (severity 차등 라벨링 도구) — severity 재도입은 위 v1.1 계획 항목
-- pyannote VAD 동적 삽입 — `huggingface_token` 환경변수만 있고 코드 미사용
-  (filler가 사전 매칭 단일 차원으로 굳음)
+- pyannote VAD 동적 삽입 (filler가 사전 매칭 단일 차원으로 굳음 — 도입 시 hf token 추가)
 - 자동 카테고리 분류, 신규 카테고리(발표/스피치 등) 정밀 튜닝
 - Replicate GPU 외부화 + cold-start warmup — 현재 `DEVICE="cpu"`, `int8`
   로컬 운용 (`audio/transcribe.py:19`)
