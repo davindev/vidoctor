@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import cast
+from typing import TypedDict, cast
 
 from pydantic import BaseModel
 
@@ -26,12 +26,21 @@ from vidoctor.graph.state import (
     DIM_TO_STATE_FIELD,
     AnalysisState,
     Category,
+    Dimension,
 )
 
 _log = logging.getLogger(__name__)
 
+
+class ExpectedMarker(TypedDict):
+    start: float
+    end: float
+    dimension: Dimension
+    note: str
+
+
 # script.md 의도된 마커. 영상 길이가 의도(3:00)와 다를 경우 매칭이 흔들리는 것은 정상.
-EXPECTED_LECTURE: list[dict] = [
+EXPECTED_LECTURE: list[ExpectedMarker] = [
     {"start": 25, "end": 28, "dimension": "gaze", "note": "노트북 응시 3s"},
     {"start": 60, "end": 80, "dimension": "filler", "note": "음·어 burst 8개"},
     {"start": 84, "end": 90, "dimension": "gaze", "note": "노트북 응시 6s"},
