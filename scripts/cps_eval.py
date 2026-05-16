@@ -53,18 +53,20 @@ def _f0_cache_path(video_path: Path) -> Path:
     return ROOT / "data" / "golden" / "inputs" / f"f0_{video_path.stem}.npz"
 
 
-def _load_or_extract_pitch(video_path: Path, no_cache: bool):
-    """오디오에서 F0 시계열 추출 (npz cache). 동일 cache는 transcript와 무관."""
+def _load_or_extract_pitch(
+    video_path: Path, no_cache: bool
+) -> tuple[np.ndarray, np.ndarray]:
+    """오디오에서 F0 시계열 추출 (npz 캐시)."""
     cache = _f0_cache_path(video_path)
     if cache.exists() and not no_cache:
-        _log.info("loading cached F0: %s", cache.name)
+        _log.info("캐시된 F0 로드: %s", cache.name)
         d = np.load(cache)
         return d["f0"], d["times"]
-    _log.info("extracting F0 from %s...", video_path.name)
+    _log.info("F0 추출 중: %s", video_path.name)
     f0, times = extract_pitch_track(str(video_path))
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(cache, f0=f0, times=times)
-    _log.info("  → %d frames (cached → %s)", len(f0), cache.name)
+    _log.info("  → %d 프레임 (캐시 저장: %s)", len(f0), cache.name)
     return f0, times
 
 
@@ -73,7 +75,7 @@ def main() -> None:
     parser.add_argument(
         "--no-pitch",
         action="store_true",
-        help="F0 multi-feature 비활성화 (cps z-score 단독 — 비교 측정용)",
+        help="F0 multi-feature 비활성화",
     )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)
