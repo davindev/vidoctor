@@ -44,7 +44,7 @@ _DIMENSION = "dead_zone"
 
 
 def _flow_cache_path(video_path: Path) -> Path:
-    # 캐시 키에 통계 종류('max') 명시 — 통계 정의가 바뀌면 별도 캐시로 자동 분리.
+    # 'max' = 프레임 내 flow magnitude 최댓값. 통계 종류를 키에 박아 정의 변경 시 캐시 분리.
     return (
         ROOT
         / "data"
@@ -59,15 +59,15 @@ def _load_or_extract_flow(
 ) -> tuple[np.ndarray, np.ndarray, float]:
     cache = _flow_cache_path(video_path)
     if cache.exists() and not no_cache:
-        _log.info("loading cached flow: %s", cache.name)
+        _log.info("캐시된 flow 로드: %s", cache.name)
         d = np.load(cache)
         return d["curr_times"], d["flows"], float(d["duration"])
 
-    _log.info("computing optical flow for %s...", video_path.name)
+    _log.info("optical flow 추출 중: %s", video_path.name)
     curr_t, flows, duration = flow_series(str(video_path))
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(cache, curr_times=curr_t, flows=flows, duration=duration)
-    _log.info("  → %d samples, duration=%.1fs (cached → %s)", len(flows), duration, cache.name)
+    _log.info("  → %d 샘플, duration=%.1fs (캐시 저장: %s)", len(flows), duration, cache.name)
     return curr_t, flows, duration
 
 
@@ -78,6 +78,7 @@ def _detect(
     min_duration: float,
     flow_threshold: float,
 ) -> list[DeadZoneEvent]:
+    """silent 구간 중 길이·flow 두 게이트를 모두 통과한 것만 DeadZoneEvent로 반환한다."""
     events: list[DeadZoneEvent] = []
     for iv in silent:
         if iv.end - iv.start < min_duration:
@@ -95,6 +96,7 @@ def _label_diagnostics(
     curr_times: np.ndarray,
     flows: np.ndarray,
 ) -> list[dict]:
+    """라벨 구간별 silent coverage + flow 통계"""
     out: list[dict] = []
     for ls, le in label_intervals:
         ldur = max(le - ls, 1e-9)
@@ -127,13 +129,17 @@ def _label_diagnostics(
 def main() -> None:
     parser = build_eval_parser("dead_zone P/R/F1 + MLflow logging (VAD)")
     parser.add_argument("category", choices=["lecture", "vlog", "other"])
-    parser.add_argument("--min-duration", type=float, default=None)
+    parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=None,
+        help="최소 무발화 길이(초). 이상이어야 후보 (기본: 카테고리 상수)",
+    )
     parser.add_argument(
         "--flow-threshold",
         type=float,
         default=None,
-        help="후보 안 per-frame max 시계열의 median이 이 값 이하이면 정적. "
-        "기본=카테고리 상수 (lecture 0.5, vlog/other 5.0).",
+        help="flow median 임계. 이하이면 정적 (기본: lecture 0.5, vlog/other 5.0)",
     )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)
@@ -150,18 +156,18 @@ def main() -> None:
     )
 
     curr_times, flows, duration = _load_or_extract_flow(args.video_path, args.no_cache)
-    _log.info("loading audio + VAD...")
+    _log.info("오디오 로드 + VAD 실행")
     audio = load_audio_or_empty(str(args.video_path))
     silent = silent_intervals_from_audio(audio, duration)
-    _log.info("  → %d silent intervals", len(silent))
+    _log.info("  → %d개 무발화 구간", len(silent))
 
     events = _detect(silent, curr_times, flows, min_duration, flow_threshold)
 
     labels = load_labels(args.labels_csv)
-    dz_labels = filter_labels_by_dim(labels, _DIMENSION)
-    dz_intervals = [(lbl.start, lbl.end) for lbl in dz_labels]
+    dead_zone_labels = filter_labels_by_dim(labels, _DIMENSION)
+    dead_zone_intervals = [(lbl.start, lbl.end) for lbl in dead_zone_labels]
 
-    m = _compute_iou_metrics("dead_zone", dz_intervals, events)
+    m = _compute_iou_metrics(_DIMENSION, dead_zone_intervals, events)
     metrics = metrics_to_dict(m)
     _log.info(
         "dead_zone(%s): TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
@@ -172,11 +178,11 @@ def main() -> None:
         min_duration, flow_threshold, len(silent), len(events),
     )
 
-    diag = _label_diagnostics(dz_intervals, silent, curr_times, flows)
+    diag = _label_diagnostics(dead_zone_intervals, silent, curr_times, flows)
 
     params = {
         "video": args.video_path.name,
-        "label_count": len(dz_labels),
+        "label_count": len(dead_zone_labels),
         "detected_count": len(events),
         "category": category,
         "video_duration": round(duration, 2),
@@ -206,7 +212,7 @@ def main() -> None:
             "detected": [{"start": e.start, "end": e.end} for e in events],
             "labels": [
                 {"start": lbl.start, "end": lbl.end, "note": lbl.note}
-                for lbl in dz_labels
+                for lbl in dead_zone_labels
             ],
             "label_diagnostics": diag,
             "silent_intervals": [{"start": iv.start, "end": iv.end} for iv in silent],
