@@ -179,11 +179,11 @@ def test_samples_long_front_gap_splits_events():
 # ---------------------------------------------------------------------------
 
 
-def testsubtract_baseline_empty_returns_empty():
+def test_subtract_baseline_empty_returns_empty():
     assert subtract_baseline([]) == ([], 0.0, 0.0)
 
 
-def testsubtract_baseline_centers_yaw_pitch_on_median():
+def test_subtract_baseline_centers_yaw_pitch_on_median():
     samples = [
         PoseSample(t=0.0, yaw=2.0, pitch=-12.0),
         PoseSample(t=1.0, yaw=3.0, pitch=-10.0),
@@ -197,7 +197,7 @@ def testsubtract_baseline_centers_yaw_pitch_on_median():
     assert [s.pitch for s in out] == [-3.0, -1.0, 0.0, 1.0, 3.0]
 
 
-def testsubtract_baseline_robust_to_outlier():
+def test_subtract_baseline_robust_to_outlier():
     # 짧은 시선 이탈(1개 큰 yaw)이 baseline 추정을 오염시키지 않아야 — median 사용.
     samples = [PoseSample(t=float(i), yaw=0.0, pitch=0.0) for i in range(9)]
     samples.append(PoseSample(t=9.0, yaw=80.0, pitch=0.0))
@@ -205,6 +205,13 @@ def testsubtract_baseline_robust_to_outlier():
     assert by == 0.0
     assert out[0].yaw == 0.0
     assert out[-1].yaw == 80.0
+
+
+def test_subtract_baseline_even_count_uses_median_average():
+    # 짝수 개 입력에서 median = 가운데 두 값 평균. numpy median 동작 회귀 가드.
+    samples = [PoseSample(t=float(i), yaw=float(i), pitch=0.0) for i in range(4)]
+    _, by, _ = subtract_baseline(samples)
+    assert by == 1.5  # median([0, 1, 2, 3]) = (1 + 2) / 2
 
 
 # ---------------------------------------------------------------------------
