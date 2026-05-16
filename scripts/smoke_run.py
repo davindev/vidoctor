@@ -20,11 +20,9 @@ from typing import cast
 
 from pydantic import BaseModel
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from vidoctor.graph import run_analysis  # noqa: E402
-from vidoctor.graph.state import (  # noqa: E402
+from vidoctor.config import ROOT
+from vidoctor.graph import run_analysis
+from vidoctor.graph.state import (
     DIM_TO_STATE_FIELD,
     AnalysisState,
     Category,

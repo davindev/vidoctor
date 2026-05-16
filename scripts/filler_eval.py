@@ -18,13 +18,11 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from vidoctor.audio.filler import detect_filler_events  # noqa: E402
-from vidoctor.eval._script_lib import load_or_transcribe, log_mlflow_run  # noqa: E402
-from vidoctor.eval.labels import load_labels  # noqa: E402
-from vidoctor.eval.metrics import compute_filler_metrics  # noqa: E402
+from vidoctor.audio.filler import detect_filler_events
+from vidoctor.config import ROOT
+from vidoctor.eval._script_lib import load_or_transcribe, log_mlflow_run
+from vidoctor.eval.labels import load_labels
+from vidoctor.eval.metrics import compute_filler_metrics
 
 _EXPERIMENT_NAME = "vidoctor-filler"
 

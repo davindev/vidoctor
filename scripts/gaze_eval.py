@@ -24,13 +24,11 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from vidoctor.eval._script_lib import log_mlflow_run  # noqa: E402
-from vidoctor.eval.labels import load_labels  # noqa: E402
-from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics  # noqa: E402
-from vidoctor.vision.gaze import (  # noqa: E402
+from vidoctor.config import ROOT
+from vidoctor.eval._script_lib import log_mlflow_run
+from vidoctor.eval.labels import load_labels
+from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
+from vidoctor.vision.gaze import (
     MERGE_GAP_SEC,
     MIN_DURATION_SEC,
     PITCH_THRESHOLD_DEG,
