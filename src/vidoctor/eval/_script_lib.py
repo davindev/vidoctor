@@ -1,7 +1,8 @@
 """평가 스크립트 공용 유틸 — argparse · 로깅 · 라벨 · 캐시 · 메트릭 · MLflow.
 
-5개 차원 *_eval.py가 공유하는 헬퍼: 공통 인자 파서, run_name 접두 로깅, 입력 파일
-검증, 라벨 필터, ASR 캐시 로드, metrics dict 변환, 평가 JSON 저장, MLflow 기록.
+scripts/*_eval.py 전용 헬퍼. production API에는 노출되지 않는 internal 모듈.
+공통 인자 파서, run_name 접두 로깅, 입력 파일 검증, 라벨 필터, ASR 캐시 로드,
+metrics dict 변환, 평가 JSON 저장, MLflow 기록.
 """
 
 from __future__ import annotations
