@@ -11,49 +11,49 @@ import pytest
 from tests._helpers import write_video
 from vidoctor.graph.state import Category
 from vidoctor.vision.dead_zone import (
-    _flow_median_in,
-    _Interval,
-    _silent_intervals_from_audio,
+    SilentInterval,
     detect_dead_zone_events,
+    flow_median_in,
+    silent_intervals_from_audio,
 )
 
 # ---------------------------------------------------------------------------
-# _silent_intervals_from_audio (Silero VAD wrapper)
+# silent_intervals_from_audio (Silero VAD wrapper)
 # ---------------------------------------------------------------------------
 
 
 def test_silent_intervals_empty_audio_full_video():
-    silent = _silent_intervals_from_audio(np.array([], dtype=np.float32), 10.0)
-    assert silent == [_Interval(0.0, 10.0)]
+    silent = silent_intervals_from_audio(np.array([], dtype=np.float32), 10.0)
+    assert silent == [SilentInterval(0.0, 10.0)]
 
 
 def test_silent_intervals_empty_audio_zero_duration():
-    assert _silent_intervals_from_audio(np.array([], dtype=np.float32), 0.0) == []
+    assert silent_intervals_from_audio(np.array([], dtype=np.float32), 0.0) == []
 
 
 def test_silent_intervals_pure_silence_audio():
     silent_audio = np.zeros(16000 * 5, dtype=np.float32)
-    silent = _silent_intervals_from_audio(silent_audio, 5.0)
-    assert silent == [_Interval(0.0, 5.0)]
+    silent = silent_intervals_from_audio(silent_audio, 5.0)
+    assert silent == [SilentInterval(0.0, 5.0)]
 
 
 # ---------------------------------------------------------------------------
-# _flow_median_in
+# flow_median_in
 # ---------------------------------------------------------------------------
 
 
-def test_flow_median_in_returns_window_median():
+def testflow_median_in_returns_window_median():
     curr = np.array([1.0, 2.0, 3.0, 4.0])
     flows = np.array([0.05, 0.1, 0.5, 0.2])
     # 2~4s window: 0.1, 0.5, 0.2 → median 0.2
-    assert _flow_median_in(curr, flows, 2.0, 4.0) == pytest.approx(0.2)
+    assert flow_median_in(curr, flows, 2.0, 4.0) == pytest.approx(0.2)
 
 
-def test_flow_median_in_no_samples_returns_none():
+def testflow_median_in_no_samples_returns_none():
     curr = np.array([10.0, 20.0])
     flows = np.array([0.01, 0.01])
     # 0~5s 안 샘플 없음 → None (caller가 명시적으로 가드)
-    assert _flow_median_in(curr, flows, 0.0, 5.0) is None
+    assert flow_median_in(curr, flows, 0.0, 5.0) is None
 
 
 # ---------------------------------------------------------------------------

@@ -107,7 +107,7 @@ MERGE_GAP_SEC = 1.0
 @dataclass(frozen=True)
 class GazeConfig:
     """gaze 검출 임계 묶음. eval sweep이 모듈 globals를 mutate하던 hack을 대체 — 임계는
-    이 객체로 전달해 _samples_to_events / _is_off가 순수 함수가 된다."""
+    이 객체로 전달해 samples_to_events / _is_off가 순수 함수가 된다."""
 
     yaw_threshold_deg: float = YAW_THRESHOLD_DEG
     pitch_threshold_deg: float = PITCH_THRESHOLD_DEG
@@ -156,7 +156,7 @@ class _VideoMeta:
 
 
 @dataclass(frozen=True)
-class _PoseSample:
+class PoseSample:
     """프레임 단위 head pose 측정값. is_off/direction은 임계 의존이라 raw를 보존."""
 
     t: float
@@ -247,12 +247,12 @@ def _label_direction(yaw: float, pitch: float, cfg: GazeConfig) -> Direction:
     return _DIRECTIONS[(h, v)]
 
 
-def _is_off(sample: _PoseSample, cfg: GazeConfig) -> bool:
+def _is_off(sample: PoseSample, cfg: GazeConfig) -> bool:
     return abs(sample.yaw) > cfg.yaw_threshold_deg or abs(sample.pitch) > cfg.pitch_threshold_deg
 
 
-def _samples_to_events(
-    samples: list[_PoseSample], cfg: GazeConfig = _DEFAULT_CONFIG
+def samples_to_events(
+    samples: list[PoseSample], cfg: GazeConfig = _DEFAULT_CONFIG
 ) -> list[GazeEvent]:
     """is_off 연속 구간을 GazeEvent로 묶음. 짧은 정면 복귀는 cfg.merge_gap_sec까지 같은 이벤트."""
     events: list[GazeEvent] = []
@@ -306,7 +306,7 @@ def _ensure_model(url: str, path: Path, expected_sha256: str) -> Path:
     원자성: tmp에 받아 검증 통과 후 path.replace로 atomic rename. 중간 실패에도 최종
     경로는 늘 valid 상태(옛 정상본 또는 새 정상본).
 
-    lru_cache: `_sample_video_pose`가 영상마다 호출되며 _ensure_model을 부르는데 같은
+    lru_cache: `sample_video_pose`가 영상마다 호출되며 _ensure_model을 부르는데 같은
     인자(2종)면 결과 동일하므로 프로세스 수명 동안 검증 1회면 충분.
     """
     if path.exists():
@@ -455,7 +455,7 @@ def _detect_webcam_roi(video_path: str) -> _ROI | None:
     return None
 
 
-def _sample_video_pose(video_path: str) -> list[_PoseSample]:
+def sample_video_pose(video_path: str) -> list[PoseSample]:
     # 1단계: 웹캠 ROI 자동 추정. 4코너 폴백까지 실패하면 FaceLandmarker는 BlazeFace보다
     # 큰 얼굴을 요구하므로 의미 있는 결과를 못 낸다 → 즉시 빈 list로 빠른 종료.
     roi = _detect_webcam_roi(video_path)
@@ -467,7 +467,7 @@ def _sample_video_pose(video_path: str) -> list[_PoseSample]:
     from mediapipe.tasks import python as mp_tasks
     from mediapipe.tasks.python import vision as mp_vision
 
-    samples: list[_PoseSample] = []
+    samples: list[PoseSample] = []
     with open_capture(video_path) as cap:
         meta = _read_video_meta(cap)
         cam_w, cam_h = roi.w, roi.h
@@ -519,14 +519,14 @@ def _sample_video_pose(video_path: str) -> list[_PoseSample]:
                     continue
 
                 yaw, pitch = pose
-                samples.append(_PoseSample(t=t, yaw=yaw, pitch=pitch))
+                samples.append(PoseSample(t=t, yaw=yaw, pitch=pitch))
 
     return samples
 
 
-def _subtract_baseline(
-    samples: list[_PoseSample],
-) -> tuple[list[_PoseSample], float, float]:
+def subtract_baseline(
+    samples: list[PoseSample],
+) -> tuple[list[PoseSample], float, float]:
     """영상 전체 yaw/pitch median을 정면 baseline으로 차감해 (samples, by, bp) 반환.
 
     median은 outlier에 robust해 짧은 시선 이탈이 baseline 추정을 오염시키지 않는다.
@@ -541,13 +541,13 @@ def _subtract_baseline(
     yaws = np.array([s.yaw for s in samples])
     pitches = np.array([s.pitch for s in samples])
     by, bp = float(np.median(yaws)), float(np.median(pitches))
-    centered = [_PoseSample(t=s.t, yaw=s.yaw - by, pitch=s.pitch - bp) for s in samples]
+    centered = [PoseSample(t=s.t, yaw=s.yaw - by, pitch=s.pitch - bp) for s in samples]
     return centered, by, bp
 
 
 def _detect_gaze_sync(video_path: str) -> list[GazeEvent]:
-    samples, _, _ = _subtract_baseline(_sample_video_pose(video_path))
-    return _samples_to_events(samples)
+    samples, _, _ = subtract_baseline(sample_video_pose(video_path))
+    return samples_to_events(samples)
 
 
 async def detect_gaze_events(video_path: str) -> list[GazeEvent]:

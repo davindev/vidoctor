@@ -25,6 +25,8 @@ from scenedetect import ContentDetector, SceneManager, open_video
 from vidoctor.graph.state import Category, ContentGapEvent, Word
 from vidoctor.llm import (
     LLMCallMetrics,
+    estimate_cost_usd,
+    extract_token_usage,
     get_chat_model,
     invoke_structured_with_metrics,
 )
@@ -86,7 +88,7 @@ _RUBRICS: dict[Category, str] = {
 
 
 @dataclass(frozen=True)
-class _FrameSample:
+class FrameSample:
     time_sec: float
     image_b64: str
     transcript_text: str
@@ -183,7 +185,7 @@ def _merge_sample_times(
 
 def _sample_frames(
     video_path: str, transcript: list[Word]
-) -> list[_FrameSample]:
+) -> list[FrameSample]:
     """균등 시각 + 컷 경계 시각에서 프레임 추출 + transcript 매칭.
 
     POS_MSEC seek는 GOP 키프레임 경계로 스냅될 수 있어 요청한 t와 실제 디코딩 시각이
@@ -198,7 +200,7 @@ def _sample_frames(
             cuts=_detect_scene_cuts(video_path),
             max_samples=MAX_SAMPLES,
         )
-        samples: list[_FrameSample] = []
+        samples: list[FrameSample] = []
         for t in sample_times:
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
             ret, frame = cap.read()
@@ -206,7 +208,7 @@ def _sample_frames(
                 break
             actual_t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
             samples.append(
-                _FrameSample(
+                FrameSample(
                     time_sec=actual_t,
                     image_b64=encode_frame_jpeg(
                         frame, max_height=MAX_FRAME_HEIGHT, quality=JPEG_QUALITY
@@ -217,7 +219,7 @@ def _sample_frames(
         return samples
 
 
-def _build_message(samples: list[_FrameSample], rubric: str) -> HumanMessage:
+def _build_message(samples: list[FrameSample], rubric: str) -> HumanMessage:
     """프레임 + transcript + rubric을 multi-image HumanMessage로 묶음."""
     content: list[str | dict] = [{"type": "text", "text": rubric}]
     window = int(TRANSCRIPT_WINDOW_SEC)
@@ -305,6 +307,92 @@ def _anchor_to_asr(
     start = max(0.0, min(w.start for w in matched) - _ASR_ANCHOR_MARGIN_SEC)
     end = max(w.end for w in matched) + _ASR_ANCHOR_MARGIN_SEC
     return start, end
+
+
+@dataclass(frozen=True)
+class ContentGapDiagnostics:
+    """평가용 진단 패키지. detect_content_gap_events 결과 + 호출 내부 자원
+    (frame samples, raw LLM response, token 사용량) 보존.
+
+    평가 스크립트가 라벨 시간대를 어떤 프레임이 커버했나·LLM이 어떻게 응답했나·
+    비용·latency를 표시할 때 필요한 모든 데이터를 한 묶음으로 반환."""
+
+    events: list[ContentGapEvent]
+    samples: list[FrameSample]
+    issues_raw: list[dict]
+    latency_sec: float
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+    raw_text: str
+
+
+async def detect_with_diagnostics(
+    video_path: str,
+    transcript: list[Word],
+    category: Category,
+    *,
+    model_name: str = _MODEL,
+) -> ContentGapDiagnostics:
+    """평가용 진입점 — detect_content_gap_events 흐름을 그대로 따라가되 frame samples,
+    raw LLM response, token 사용량, latency를 함께 반환. 평가 스크립트가 모듈 내부
+    `_` helper에 의존하지 않고도 동일 출력을 재구성할 수 있도록 단일 공식 hook 제공.
+    """
+    import json as _json
+    import time
+
+    samples = _sample_frames(video_path, transcript)
+    if not samples:
+        return ContentGapDiagnostics(
+            events=[],
+            samples=[],
+            issues_raw=[],
+            latency_sec=0.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_usd=0.0,
+            raw_text="",
+        )
+
+    message = _build_message(samples, _RUBRICS[category])
+    model = get_chat_model(model=model_name, temperature=0.0, max_tokens=1024)
+    structured = model.with_structured_output(_ContentGapResponse, include_raw=True)
+
+    t0 = time.perf_counter()
+    result = await structured.ainvoke([message])
+    latency = time.perf_counter() - t0
+
+    raw = result["raw"] if isinstance(result, dict) else None
+    parsed = result["parsed"] if isinstance(result, dict) else result
+    if not isinstance(parsed, _ContentGapResponse):
+        parsed = _ContentGapResponse(issues=[])
+
+    prompt_tok, completion_tok = extract_token_usage(raw)
+    total_tok = prompt_tok + completion_tok
+    raw_text = ""
+    if raw is not None:
+        content = getattr(raw, "content", "")
+        raw_text = content if isinstance(content, str) else _json.dumps(content, ensure_ascii=False)
+
+    events: list[ContentGapEvent] = []
+    for issue in parsed.issues:
+        anchored = _anchor_to_asr(issue, transcript)
+        start, end = anchored if anchored is not None else (issue.start_sec, issue.end_sec)
+        events.append(ContentGapEvent(start=start, end=end, description=issue.description))
+
+    return ContentGapDiagnostics(
+        events=events,
+        samples=samples,
+        issues_raw=[i.model_dump() for i in parsed.issues],
+        latency_sec=latency,
+        prompt_tokens=prompt_tok,
+        completion_tokens=completion_tok,
+        total_tokens=total_tok,
+        cost_usd=estimate_cost_usd(model_name, prompt_tok, completion_tok),
+        raw_text=raw_text,
+    )
 
 
 async def detect_content_gap_events(

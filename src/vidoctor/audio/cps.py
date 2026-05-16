@@ -123,7 +123,7 @@ def _char_count(words: list[Word], start: float, end: float) -> float:
     return total
 
 
-def _sliding_windows(words: list[Word]) -> list[_Window]:
+def sliding_windows(words: list[Word]) -> list[_Window]:
     if not words:
         return []
 
@@ -215,7 +215,7 @@ def detect_cps_anomalies(
     윈도우 정의를 공유해야 하는 호출 경로(`detect_cps_with_audio`)에서 사용.
     """
     if windows is None:
-        windows = _sliding_windows(words)
+        windows = sliding_windows(words)
     if len(windows) < MIN_WINDOWS_FOR_STATS:
         return []
     if pitch_features is not None and len(pitch_features) != len(windows):
@@ -252,11 +252,11 @@ def detect_cps_with_audio(words: list[Word], audio_path: str) -> list[CPSEvent]:
     """오디오 path 받아 F0 추출 + multi-feature detector 일괄 처리.
 
     호출자가 윈도우 정의·F0 추출·detector 호출 정합을 직접 챙기지 않게 캡슐화 —
-    `_sliding_windows`를 cross-module로 노출하지 않고 한 함수가 책임진다.
+    `sliding_windows`를 cross-module로 노출하지 않고 한 함수가 책임진다.
     """
     from vidoctor.audio.pitch import extract_pitch_track, window_pitch_features
 
-    windows = _sliding_windows(words)
+    windows = sliding_windows(words)
     if not windows:
         return []
     f0, times = extract_pitch_track(audio_path)

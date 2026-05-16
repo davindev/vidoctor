@@ -75,7 +75,7 @@ _FFMPEG_NO_STREAM_MARKER = "Output file does not contain any stream"
 
 
 @dataclass(frozen=True)
-class _Interval:
+class SilentInterval:
     start: float
     end: float
 
@@ -85,12 +85,12 @@ def _vad_model() -> Any:
     return load_silero_vad()
 
 
-def _silent_intervals_from_audio(
+def silent_intervals_from_audio(
     audio: np.ndarray, video_duration: float
-) -> list[_Interval]:
+) -> list[SilentInterval]:
     """Silero VAD로 발화 구간 추출 → 영상 - 발화 = 무발화 구간."""
     if audio.size == 0:
-        return [_Interval(0.0, video_duration)] if video_duration > 0 else []
+        return [SilentInterval(0.0, video_duration)] if video_duration > 0 else []
 
     audio_tensor = torch.from_numpy(audio).float()
     speech_ts: list[dict[str, float]] = get_speech_timestamps(
@@ -102,21 +102,21 @@ def _silent_intervals_from_audio(
     )
 
     if not speech_ts:
-        return [_Interval(0.0, video_duration)] if video_duration > 0 else []
+        return [SilentInterval(0.0, video_duration)] if video_duration > 0 else []
 
-    silents: list[_Interval] = []
+    silents: list[SilentInterval] = []
     prev_end = 0.0
     for t in speech_ts:
         s, e = float(t["start"]), float(t["end"])
         if s > prev_end:
-            silents.append(_Interval(prev_end, s))
+            silents.append(SilentInterval(prev_end, s))
         prev_end = max(prev_end, e)
     if video_duration > prev_end:
-        silents.append(_Interval(prev_end, video_duration))
+        silents.append(SilentInterval(prev_end, video_duration))
     return silents
 
 
-def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
+def flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
     """샘플 프레임 인접쌍 optical flow magnitude per-frame max 시계열.
 
     Farneback dense flow → 픽셀별 (dx, dy) 벡터 → magnitude → 프레임 안 max.
@@ -176,7 +176,7 @@ def _flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
     )
 
 
-def _flow_median_in(
+def flow_median_in(
     curr_times: np.ndarray,
     flows: np.ndarray,
     start: float,
@@ -189,7 +189,7 @@ def _flow_median_in(
     return float(np.median(flows[mask]))
 
 
-def _load_audio_or_empty(video_path: str) -> np.ndarray:
+def load_audio_or_empty(video_path: str) -> np.ndarray:
     """audio 트랙 없는 영상은 빈 array fallback. 다른 ffmpeg 에러는 그대로 raise."""
     try:
         return whisperx.load_audio(video_path)
@@ -212,20 +212,20 @@ async def detect_dead_zone_events(
     재사용. 없으면 fallback으로 직접 로드. flow_series(OpenCV)는 audio와 무관해 항상
     별도 스레드로 병렬.
     """
-    flow_task = asyncio.to_thread(_flow_series, video_path)
+    flow_task = asyncio.to_thread(flow_series, video_path)
     if audio is None:
-        audio_task = asyncio.to_thread(_load_audio_or_empty, video_path)
+        audio_task = asyncio.to_thread(load_audio_or_empty, video_path)
         (curr_times, flows, duration), audio = await asyncio.gather(flow_task, audio_task)
     else:
         curr_times, flows, duration = await flow_task
-    silent = _silent_intervals_from_audio(audio, duration)
+    silent = silent_intervals_from_audio(audio, duration)
     cfg = CATEGORY_CONFIG[category]
 
     events: list[DeadZoneEvent] = []
     for iv in silent:
         if iv.end - iv.start < cfg.min_duration_sec:
             continue
-        median = _flow_median_in(curr_times, flows, iv.start, iv.end)
+        median = flow_median_in(curr_times, flows, iv.start, iv.end)
         if median is None or median > cfg.flow_max_threshold:
             continue
         events.append(DeadZoneEvent(start=iv.start, end=iv.end))

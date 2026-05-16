@@ -13,9 +13,9 @@ import pytest
 from tests._helpers import _w, write_video
 from vidoctor.vision.content_gap import (
     MAX_SAMPLES,
+    FrameSample,
     _build_message,
     _detect_scene_cuts,
-    _FrameSample,
     _merge_sample_times,
     _transcript_around,
     _uniform_times,
@@ -58,8 +58,8 @@ def test_transcript_around_empty_when_no_words_in_window():
 
 def test_build_message_contains_rubric_and_frames():
     samples = [
-        _FrameSample(time_sec=10.0, image_b64="AAAA", transcript_text="안녕"),
-        _FrameSample(time_sec=40.0, image_b64="BBBB", transcript_text=""),
+        FrameSample(time_sec=10.0, image_b64="AAAA", transcript_text="안녕"),
+        FrameSample(time_sec=40.0, image_b64="BBBB", transcript_text=""),
     ]
     rubric = "rubric_marker_text"
     msg = _build_message(samples, rubric)

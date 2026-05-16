@@ -38,10 +38,10 @@ from vidoctor.vision.gaze import (
     SAMPLE_FPS,
     YAW_THRESHOLD_DEG,
     GazeConfig,
-    _PoseSample,
-    _sample_video_pose,
-    _samples_to_events,
-    _subtract_baseline,
+    PoseSample,
+    sample_video_pose,
+    samples_to_events,
+    subtract_baseline,
 )
 
 _log = logging.getLogger(__name__)
@@ -59,19 +59,19 @@ def _pose_cache_path(video_path: Path) -> Path:
 
 def _load_or_extract_pose(
     video_path: Path, no_cache: bool
-) -> list[_PoseSample]:
+) -> list[PoseSample]:
     cache = _pose_cache_path(video_path)
     if cache.exists() and not no_cache:
         _log.info("loading cached pose: %s", cache.name)
         d = np.load(cache)
         ts, yaws, pitches = d["t"], d["yaw"], d["pitch"]
         return [
-            _PoseSample(t=float(ts[i]), yaw=float(yaws[i]), pitch=float(pitches[i]))
+            PoseSample(t=float(ts[i]), yaw=float(yaws[i]), pitch=float(pitches[i]))
             for i in range(len(ts))
         ]
 
     _log.info("extracting head pose for %s (ROI + landmarker, slow)...", video_path.name)
-    samples = _sample_video_pose(str(video_path))
+    samples = sample_video_pose(str(video_path))
     if not samples:
         _log.warning("  → 0 samples (ROI 추정 실패 — 화자 얼굴 미검출)")
         return samples
@@ -86,25 +86,25 @@ def _load_or_extract_pose(
 
 
 def _detect_with_thresholds(
-    samples: list[_PoseSample],
+    samples: list[PoseSample],
     yaw_thr: float,
     pitch_thr: float,
     min_duration: float,
     merge_gap: float,
 ) -> list:
-    """sweep 임계로 _samples_to_events 호출 — GazeConfig 키워드로 주입."""
+    """sweep 임계로 samples_to_events 호출 — GazeConfig 키워드로 주입."""
     cfg = GazeConfig(
         yaw_threshold_deg=yaw_thr,
         pitch_threshold_deg=pitch_thr,
         min_duration_sec=min_duration,
         merge_gap_sec=merge_gap,
     )
-    return _samples_to_events(samples, cfg)
+    return samples_to_events(samples, cfg)
 
 
 def _label_diagnostics(
     label_intervals: list[tuple[float, float]],
-    samples: list[_PoseSample],
+    samples: list[PoseSample],
     yaw_thr: float,
     pitch_thr: float,
 ) -> list[dict]:
@@ -169,7 +169,7 @@ def _label_diagnostics(
     return out
 
 
-def _global_pose_summary(samples: list[_PoseSample]) -> dict:
+def _global_pose_summary(samples: list[PoseSample]) -> dict:
     if not samples:
         return {"n_samples": 0}
     yaws = np.array([s.yaw for s in samples])
@@ -237,7 +237,7 @@ def main() -> None:
 
     baseline_yaw = baseline_pitch = 0.0
     if not args.no_baseline:
-        samples, baseline_yaw, baseline_pitch = _subtract_baseline(samples)
+        samples, baseline_yaw, baseline_pitch = subtract_baseline(samples)
         _log.info(
             "  → baseline subtracted: yaw_median=%+.2f° pitch_median=%+.2f°",
             baseline_yaw, baseline_pitch,

@@ -1,6 +1,6 @@
 """Gaze 검출 테스트.
 
-순수 함수(_label_direction / _samples_to_events / _normalize_pose_angle) 단위 +
+순수 함수(_label_direction / samples_to_events / _normalize_pose_angle) 단위 +
 정면 응시 6점 합성 입력으로 _solve_head_pose sanity check + 카테고리 가드.
 실 영상은 VIDOCTOR_RUN_INTEGRATION=1에서만.
 """
@@ -19,14 +19,14 @@ from vidoctor.vision.gaze import (
     _MODEL_POINTS,
     PITCH_THRESHOLD_DEG,
     YAW_THRESHOLD_DEG,
+    PoseSample,
     _is_off,
     _label_direction,
     _normalize_pose_angle,
-    _PoseSample,
-    _samples_to_events,
     _solve_head_pose,
-    _subtract_baseline,
     detect_gaze_events,
+    samples_to_events,
+    subtract_baseline,
 )
 
 # 단위 테스트는 기본 임계를 사용 — production 호출 경로와 동일.
@@ -83,7 +83,7 @@ def test_label_direction_diagonal_combines():
 
 
 # ---------------------------------------------------------------------------
-# _is_off / _samples_to_events
+# _is_off / samples_to_events
 # ---------------------------------------------------------------------------
 
 
@@ -91,20 +91,20 @@ _OFF_YAW = YAW_THRESHOLD_DEG + 5
 _OFF_PITCH = PITCH_THRESHOLD_DEG + 5
 
 
-def _front(t: float) -> _PoseSample:
-    return _PoseSample(t=t, yaw=0.0, pitch=0.0)
+def _front(t: float) -> PoseSample:
+    return PoseSample(t=t, yaw=0.0, pitch=0.0)
 
 
-def _off_right(t: float) -> _PoseSample:
-    return _PoseSample(t=t, yaw=_OFF_YAW, pitch=0.0)
+def _off_right(t: float) -> PoseSample:
+    return PoseSample(t=t, yaw=_OFF_YAW, pitch=0.0)
 
 
-def _off_left(t: float) -> _PoseSample:
-    return _PoseSample(t=t, yaw=-_OFF_YAW, pitch=0.0)
+def _off_left(t: float) -> PoseSample:
+    return PoseSample(t=t, yaw=-_OFF_YAW, pitch=0.0)
 
 
-def _off_down(t: float) -> _PoseSample:
-    return _PoseSample(t=t, yaw=0.0, pitch=_OFF_PITCH)
+def _off_down(t: float) -> PoseSample:
+    return PoseSample(t=t, yaw=0.0, pitch=_OFF_PITCH)
 
 
 def test_is_off_within_threshold_returns_false():
@@ -117,22 +117,22 @@ def test_is_off_yaw_or_pitch_exceeds_threshold():
 
 
 def test_samples_empty():
-    assert _samples_to_events([]) == []
+    assert samples_to_events([]) == []
 
 
 def test_samples_all_front_no_event():
-    assert _samples_to_events([_front(0.0), _front(1.0), _front(2.0)]) == []
+    assert samples_to_events([_front(0.0), _front(1.0), _front(2.0)]) == []
 
 
 def test_samples_short_off_below_min_duration_skipped():
     # 이탈 지속 0.2s가 MIN_DURATION_SEC 미만 → 이벤트 없음.
     samples = [_front(0.0), _off_right(0.2), _off_right(0.4), _front(0.6), _front(1.2)]
-    assert _samples_to_events(samples) == []
+    assert samples_to_events(samples) == []
 
 
 def test_samples_long_off_emits_event_with_direction():
     samples = [_off_down(t) for t in (0.0, 0.5, 1.0, 1.5, 2.0)] + [_front(2.5), _front(3.0)]
-    events = _samples_to_events(samples)
+    events = samples_to_events(samples)
     assert len(events) == 1
     assert events[0].direction == "down"
     assert events[0].start == 0.0
@@ -151,7 +151,7 @@ def test_samples_short_front_blip_merges_within_gap():
         _off_left(2.4),
         _off_left(2.8),
     ]
-    events = _samples_to_events(samples)
+    events = samples_to_events(samples)
     assert len(events) == 1
     assert events[0].start == 0.0
     assert events[0].end == 2.8
@@ -168,40 +168,40 @@ def test_samples_long_front_gap_splits_events():
         _off_left(4.0),
         _off_left(4.5),
     ]
-    events = _samples_to_events(samples)
+    events = samples_to_events(samples)
     assert len(events) == 2
     assert events[0].direction == "right"
     assert events[1].direction == "left"
 
 
 # ---------------------------------------------------------------------------
-# _subtract_baseline
+# subtract_baseline
 # ---------------------------------------------------------------------------
 
 
-def test_subtract_baseline_empty_returns_empty():
-    assert _subtract_baseline([]) == ([], 0.0, 0.0)
+def testsubtract_baseline_empty_returns_empty():
+    assert subtract_baseline([]) == ([], 0.0, 0.0)
 
 
-def test_subtract_baseline_centers_yaw_pitch_on_median():
+def testsubtract_baseline_centers_yaw_pitch_on_median():
     samples = [
-        _PoseSample(t=0.0, yaw=2.0, pitch=-12.0),
-        _PoseSample(t=1.0, yaw=3.0, pitch=-10.0),
-        _PoseSample(t=2.0, yaw=4.0, pitch=-9.0),
-        _PoseSample(t=3.0, yaw=5.0, pitch=-8.0),
-        _PoseSample(t=4.0, yaw=6.0, pitch=-6.0),
+        PoseSample(t=0.0, yaw=2.0, pitch=-12.0),
+        PoseSample(t=1.0, yaw=3.0, pitch=-10.0),
+        PoseSample(t=2.0, yaw=4.0, pitch=-9.0),
+        PoseSample(t=3.0, yaw=5.0, pitch=-8.0),
+        PoseSample(t=4.0, yaw=6.0, pitch=-6.0),
     ]
-    out, by, bp = _subtract_baseline(samples)
+    out, by, bp = subtract_baseline(samples)
     assert (by, bp) == (4.0, -9.0)
     assert [s.yaw for s in out] == [-2.0, -1.0, 0.0, 1.0, 2.0]
     assert [s.pitch for s in out] == [-3.0, -1.0, 0.0, 1.0, 3.0]
 
 
-def test_subtract_baseline_robust_to_outlier():
+def testsubtract_baseline_robust_to_outlier():
     # 짧은 시선 이탈(1개 큰 yaw)이 baseline 추정을 오염시키지 않아야 — median 사용.
-    samples = [_PoseSample(t=float(i), yaw=0.0, pitch=0.0) for i in range(9)]
-    samples.append(_PoseSample(t=9.0, yaw=80.0, pitch=0.0))
-    out, by, _ = _subtract_baseline(samples)
+    samples = [PoseSample(t=float(i), yaw=0.0, pitch=0.0) for i in range(9)]
+    samples.append(PoseSample(t=9.0, yaw=80.0, pitch=0.0))
+    out, by, _ = subtract_baseline(samples)
     assert by == 0.0
     assert out[0].yaw == 0.0
     assert out[-1].yaw == 80.0

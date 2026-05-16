@@ -30,8 +30,8 @@ from vidoctor.audio.cps import (
     SIGMA_THRESHOLD,
     STEP_SEC,
     WINDOW_SEC,
-    _sliding_windows,
     detect_cps_anomalies,
+    sliding_windows,
 )
 from vidoctor.audio.pitch import (
     extract_pitch_track,
@@ -97,7 +97,7 @@ def main() -> None:
 
     words = load_or_transcribe(args.video_path, args.no_cache)
 
-    windows = _sliding_windows(words)
+    windows = sliding_windows(words)
     cps_values = [w.cps for w in windows]
     win_mean = statistics.mean(cps_values) if cps_values else 0.0
     win_std = statistics.stdev(cps_values) if len(cps_values) >= 2 else 0.0

@@ -36,11 +36,11 @@ from vidoctor.vision.dead_zone import (
     FRAME_SAMPLE_FPS,
     VAD_MIN_SILENCE_MS,
     DeadZoneEvent,
-    _flow_median_in,
-    _flow_series,
-    _Interval,
-    _load_audio_or_empty,
-    _silent_intervals_from_audio,
+    SilentInterval,
+    flow_median_in,
+    flow_series,
+    load_audio_or_empty,
+    silent_intervals_from_audio,
 )
 
 _log = logging.getLogger(__name__)
@@ -67,14 +67,14 @@ def _load_or_extract_flow(
         return d["curr_times"], d["flows"], float(d["duration"])
 
     _log.info("computing optical flow for %s...", video_path.name)
-    curr_t, flows, duration = _flow_series(str(video_path))
+    curr_t, flows, duration = flow_series(str(video_path))
     np.savez(cache, curr_times=curr_t, flows=flows, duration=duration)
     _log.info("  → %d samples, duration=%.1fs (cached → %s)", len(flows), duration, cache.name)
     return curr_t, flows, duration
 
 
 def _detect(
-    silent: list[_Interval],
+    silent: list[SilentInterval],
     curr_times: np.ndarray,
     flows: np.ndarray,
     min_duration: float,
@@ -84,7 +84,7 @@ def _detect(
     for iv in silent:
         if iv.end - iv.start < min_duration:
             continue
-        median = _flow_median_in(curr_times, flows, iv.start, iv.end)
+        median = flow_median_in(curr_times, flows, iv.start, iv.end)
         if median is None or median > flow_threshold:
             continue
         events.append(DeadZoneEvent(start=iv.start, end=iv.end))
@@ -93,7 +93,7 @@ def _detect(
 
 def _label_diagnostics(
     label_intervals: list[tuple[float, float]],
-    silent: list[_Interval],
+    silent: list[SilentInterval],
     curr_times: np.ndarray,
     flows: np.ndarray,
 ) -> list[dict]:
@@ -153,8 +153,8 @@ def main() -> None:
 
     curr_times, flows, duration = _load_or_extract_flow(args.video_path, args.no_cache)
     _log.info("loading audio + VAD...")
-    audio = _load_audio_or_empty(str(args.video_path))
-    silent = _silent_intervals_from_audio(audio, duration)
+    audio = load_audio_or_empty(str(args.video_path))
+    silent = silent_intervals_from_audio(audio, duration)
     _log.info("  → %d silent intervals", len(silent))
 
     events = _detect(silent, curr_times, flows, min_duration, flow_threshold)
