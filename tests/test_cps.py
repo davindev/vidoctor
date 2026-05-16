@@ -1,4 +1,4 @@
-from tests._helpers import _w
+from tests._helpers import w
 from vidoctor.audio.cps import detect_cps_anomalies
 from vidoctor.graph.state import Word
 
@@ -11,7 +11,7 @@ def _normal_speech(duration_sec: float = 30.0, cps: float = 6.0) -> list[Word]:
     gap = 0.05
     t = 0.0
     while t + word_dur < duration_sec:
-        words.append(_w("테스트", t, t + word_dur))
+        words.append(w("테스트", t, t + word_dur))
         t += word_dur + gap
     return words
 
@@ -22,7 +22,7 @@ def _append_anomaly(
     word_dur = chars_per_word / target_cps
     t = words[-1].end + 0.1 if words else 0.0
     for _ in range(count):
-        words.append(_w(text, t, t + word_dur))
+        words.append(w(text, t, t + word_dur))
         t += word_dur + 0.02
 
 
@@ -69,11 +69,11 @@ def test_long_pause_excluded_from_cps():
     words = []
     t = 0.0
     for _ in range(10):
-        words.append(_w("테스트", t, t + 0.5))
+        words.append(w("테스트", t, t + 0.5))
         t += 0.55
     t = 20.0
     for _ in range(20):
-        words.append(_w("테스트", t, t + 0.5))
+        words.append(w("테스트", t, t + 0.5))
         t += 0.55
     events = detect_cps_anomalies(words)
     too_slow = [e for e in events if e.kind == "too_slow"]

@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests._helpers import _w, write_video
+from tests._helpers import w, write_video
 from vidoctor.vision.content_gap import (
     MAX_SAMPLES,
     FrameSample,
@@ -32,11 +32,11 @@ INTEGRATION_ENABLED = os.environ.get("VIDOCTOR_RUN_INTEGRATION") == "1"
 
 def test_transcript_around_picks_words_within_window():
     transcript = [
-        _w("멀리", 0.0, 0.5),
-        _w("가까이", 28.0, 28.5),
-        _w("중심", 30.0, 30.5),
-        _w("가까이", 32.0, 32.5),
-        _w("멀리", 60.0, 60.5),
+        w("멀리", 0.0, 0.5),
+        w("가까이", 28.0, 28.5),
+        w("중심", 30.0, 30.5),
+        w("가까이", 32.0, 32.5),
+        w("멀리", 60.0, 60.5),
     ]
     text = _transcript_around(transcript, time_sec=30.0)
     # 30 ± 15 = 15~45 범위에 든 단어들만
@@ -46,7 +46,7 @@ def test_transcript_around_picks_words_within_window():
 
 
 def test_transcript_around_empty_when_no_words_in_window():
-    transcript = [_w("멀리", 0.0, 0.5)]
+    transcript = [w("멀리", 0.0, 0.5)]
     text = _transcript_around(transcript, time_sec=60.0)
     assert text == ""
 
@@ -169,7 +169,7 @@ async def test_content_gap_returns_response_for_blank_lecture(tmp_path: Path):
     video = tmp_path / "blank.mp4"
     _make_lecture_video(video, duration_sec=60.0)
 
-    transcript = [_w("이건", 1.0, 1.4), _w("강의입니다", 1.5, 2.5)]
+    transcript = [w("이건", 1.0, 1.4), w("강의입니다", 1.5, 2.5)]
     events, _metrics = await detect_content_gap_events(str(video), transcript, "lecture")
 
     # 빈 슬라이드 + 짧은 발화 → 정보 부족 issue 1개+ 반환 기대 (LLM 판단)
