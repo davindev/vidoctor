@@ -45,11 +45,7 @@ def _label_diagnostics(
     samples: list[FrameSample],
     transcript: list[Word],
 ) -> list[dict]:
-    """라벨 시간대에 들어간 frame·transcript 진단.
-
-    라벨 [ls, le]의 ±TRANSCRIPT_WINDOW_SEC 안에 frame이 한 장이라도 있는지가 결정적.
-    없으면 LLM이 라벨 구간을 input으로 못 보고 그 라벨은 구조적 FN.
-    """
+    """라벨 시간대별 frame 커버리지 + transcript 진단."""
     out: list[dict] = []
     for ls, le in label_intervals:
         center = (ls + le) / 2
@@ -82,14 +78,14 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="gpt-4o",
-        help="LLM model id (gpt-4o / gpt-4o-mini 등)",
+        help="LLM 모델 이름 (예: gpt-4o, gpt-4o-mini)",
     )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)
 
     transcript = load_or_transcribe(args.video_path, args.no_cache)
 
-    _log.info("sampling frames + invoking %s...", args.model)
+    _log.info("프레임 샘플링 + LLM 호출 (%s)", args.model)
     category = cast(Category, args.category)
     diag = asyncio.run(
         detect_with_diagnostics(
@@ -101,10 +97,10 @@ def main() -> None:
     events = diag.events
 
     labels = load_labels(args.labels_csv)
-    cg_labels = filter_labels_by_dim(labels, _DIMENSION)
-    cg_intervals = [(lbl.start, lbl.end) for lbl in cg_labels]
+    content_gap_labels = filter_labels_by_dim(labels, _DIMENSION)
+    content_gap_intervals = [(lbl.start, lbl.end) for lbl in content_gap_labels]
 
-    m = _compute_iou_metrics("content_gap", cg_intervals, events)
+    m = _compute_iou_metrics(_DIMENSION, content_gap_intervals, events)
     metrics = metrics_to_dict(m) | {
         "latency_sec": round(diag.latency_sec, 3),
         "prompt_tokens": diag.prompt_tokens,
@@ -125,7 +121,7 @@ def main() -> None:
         metrics["prompt_tokens"], metrics["completion_tokens"], metrics["cost_usd"],
     )
 
-    label_diag = _label_diagnostics(cg_intervals, samples, transcript)
+    label_diag = _label_diagnostics(content_gap_intervals, samples, transcript)
     for d in label_diag:
         ls, le = d["label"]["start"], d["label"]["end"]
         n_frames = len(d["frames_covering_label"])
@@ -136,9 +132,9 @@ def main() -> None:
 
     params = {
         "video": args.video_path.name,
-        "label_count": len(cg_labels),
+        "label_count": len(content_gap_labels),
         "detected_count": len(events),
-        "category": args.category,
+        "category": category,
         "model": args.model,
         "sample_interval_sec": SAMPLE_INTERVAL_SEC,
         "transcript_window_sec": TRANSCRIPT_WINDOW_SEC,
@@ -177,7 +173,7 @@ def main() -> None:
             "issues_raw": diag.issues_raw,
             "labels": [
                 {"start": lbl.start, "end": lbl.end, "note": lbl.note}
-                for lbl in cg_labels
+                for lbl in content_gap_labels
             ],
             "label_diagnostics": label_diag,
         },
