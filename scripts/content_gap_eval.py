@@ -24,6 +24,7 @@ from vidoctor.eval._script_lib import (
     eval_dump_path,
     load_or_transcribe,
     log_mlflow_run,
+    metrics_to_dict,
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
@@ -109,14 +110,7 @@ def main() -> None:
     cg_intervals = [(lbl.start, lbl.end) for lbl in cg_labels]
 
     m = _compute_iou_metrics("content_gap", cg_intervals, events)
-    metrics = {
-        "tp": m.tp,
-        "fp": m.fp,
-        "fn": m.fn,
-        "precision": m.precision,
-        "recall": m.recall,
-        "f1": m.f1,
-        "temporal_iou_mean": m.temporal_iou_mean,
+    metrics = metrics_to_dict(m) | {
         "latency_sec": round(diag.latency_sec, 3),
         "prompt_tokens": diag.prompt_tokens,
         "completion_tokens": diag.completion_tokens,

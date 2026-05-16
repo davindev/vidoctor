@@ -19,6 +19,7 @@ import mlflow
 
 from vidoctor.audio.transcribe import transcribe_video
 from vidoctor.config import ROOT, get_settings
+from vidoctor.eval.metrics import DimensionMetrics
 from vidoctor.graph.state import Word
 
 _log = logging.getLogger(__name__)
@@ -106,6 +107,21 @@ def transcript_cache_path(video_path: Path) -> Path:
 def eval_dump_path(dimension: str, video_stem: str, run_name: str) -> Path:
     """차원별 평가 결과 JSON 경로를 반환한다."""
     return _EVAL_DUMPS_DIR / dimension / f"{video_stem}_{run_name}.json"
+
+
+def metrics_to_dict(m: DimensionMetrics, *, include_iou: bool = True) -> dict[str, float]:
+    """DimensionMetrics를 MLflow log_metrics 호환 dict로 변환한다."""
+    out: dict[str, float] = {
+        "tp": m.tp,
+        "fp": m.fp,
+        "fn": m.fn,
+        "precision": m.precision,
+        "recall": m.recall,
+        "f1": m.f1,
+    }
+    if include_iou:
+        out["temporal_iou_mean"] = m.temporal_iou_mean
+    return out
 
 
 def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:

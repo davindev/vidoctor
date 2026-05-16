@@ -44,6 +44,7 @@ from vidoctor.eval._script_lib import (
     eval_dump_path,
     load_or_transcribe,
     log_mlflow_run,
+    metrics_to_dict,
     model_tag,
     write_eval_dump,
 )
@@ -52,20 +53,6 @@ from vidoctor.eval.metrics import compute_cps_metrics
 
 _log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-cps"
-
-
-def _metrics_dict(cps_labels, events) -> dict[str, float]:
-    """compute_cps_metrics 결과를 mlflow.log_metrics 호환 dict로 변환."""
-    m = compute_cps_metrics(cps_labels, events)
-    return {
-        "tp": m.tp,
-        "fp": m.fp,
-        "fn": m.fn,
-        "precision": m.precision,
-        "recall": m.recall,
-        "f1": m.f1,
-        "temporal_iou_mean": m.temporal_iou_mean,
-    }
 
 
 def _f0_cache_path(video_path: Path) -> Path:
@@ -116,7 +103,7 @@ def main() -> None:
     labels = load_labels(args.labels_csv)
     cps_labels = [lbl for lbl in labels if lbl.dimension == "cps"]
 
-    metrics = _metrics_dict(cps_labels, events)
+    metrics = metrics_to_dict(compute_cps_metrics(cps_labels, events))
     _log.info(
         "cps: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
         metrics["tp"], metrics["fp"], metrics["fn"],

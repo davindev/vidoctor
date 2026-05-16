@@ -26,6 +26,7 @@ from vidoctor.eval._script_lib import (
     configure_eval_logging,
     eval_dump_path,
     log_mlflow_run,
+    metrics_to_dict,
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
@@ -167,15 +168,7 @@ def main() -> None:
     dz_intervals = [(lbl.start, lbl.end) for lbl in dz_labels]
 
     m = _compute_iou_metrics("dead_zone", dz_intervals, events)
-    metrics = {
-        "tp": m.tp,
-        "fp": m.fp,
-        "fn": m.fn,
-        "precision": m.precision,
-        "recall": m.recall,
-        "f1": m.f1,
-        "temporal_iou_mean": m.temporal_iou_mean,
-    }
+    metrics = metrics_to_dict(m)
     _log.info(
         "dead_zone(%s): TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
         category, m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,

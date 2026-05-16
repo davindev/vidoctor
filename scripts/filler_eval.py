@@ -1,14 +1,8 @@
-"""filler 차원만 평가 — content_gap(GPT-4o) 호출 없이 P/R/F1 측정 + MLflow 기록.
-
-전체 graph가 아닌 transcribe + detect_filler만 돌려, 라벨 vs 검출 매칭 + 라벨
-시간대 ASR 토큰을 함께 dump해 사전·임계 튜닝 의사결정 자료를 만든다.
-
-transcript는 영상별 JSON에 캐시되어 사전 튜닝 반복 시 transcribe 재실행 회피.
-캐시 무효화는 --no-cache 옵션 또는 캐시 파일 삭제.
+"""filler 차원 단독 평가 — P/R/F1 + 라벨별 ASR 토큰 dump + MLflow 기록.
 
 사용법:
-    uv run python scripts/filler_eval.py data/golden/lecture.mp4 \\
-        data/golden/lecture_labels.csv --run-name baseline_lecture
+    uv run python scripts/filler_eval.py data/golden/inputs/lecture.mp4 \\
+        data/golden/labels/lecture_labels.csv --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -22,6 +16,7 @@ from vidoctor.eval._script_lib import (
     eval_dump_path,
     load_or_transcribe,
     log_mlflow_run,
+    metrics_to_dict,
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
@@ -29,19 +24,6 @@ from vidoctor.eval.metrics import compute_filler_metrics
 
 _log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-filler"
-
-
-def _metrics_dict(label_intervals, events) -> dict[str, float]:
-    """compute_filler_metrics 결과를 mlflow.log_metrics 호환 dict로 변환."""
-    m = compute_filler_metrics(label_intervals, events)
-    return {
-        "tp": m.tp,
-        "fp": m.fp,
-        "fn": m.fn,
-        "precision": m.precision,
-        "recall": m.recall,
-        "f1": m.f1,
-    }
 
 
 def main() -> None:
@@ -56,7 +38,9 @@ def main() -> None:
     labels = load_labels(args.labels_csv)
     filler_labels = [(lbl.start, lbl.end) for lbl in labels if lbl.dimension == "filler"]
 
-    metrics = _metrics_dict(filler_labels, events)
+    metrics = metrics_to_dict(
+        compute_filler_metrics(filler_labels, events), include_iou=False
+    )
     _log.info(
         "filler: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
         metrics["tp"], metrics["fp"], metrics["fn"],
