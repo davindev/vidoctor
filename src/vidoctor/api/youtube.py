@@ -44,7 +44,9 @@ def _download_sync(url: str) -> tuple[Path, str]:
     if not _is_supported_url(url):
         raise YouTubeIngestError("유튜브 URL만 지원합니다 (youtube.com / youtu.be).")
 
-    tmp = NamedTemporaryFile(delete=False, suffix=".mp4")
+    # delete=False + 함수 종료 후에도 파일 보존 → caller가 mp4 읽음. context manager
+    # (with) 패턴이면 블록 끝에 close+delete라 의도와 충돌. noqa로 명시.
+    tmp = NamedTemporaryFile(delete=False, suffix=".mp4")  # noqa: SIM115
     tmp.close()
     out_path = Path(tmp.name)
 

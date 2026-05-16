@@ -55,6 +55,20 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 의존성·파라미터 marker는 함수 호출 형태지만 *내부 상태 없는 마커 객체* 반환 —
+# B008(함수 호출을 인자 기본값으로 두지 마라)이 false positive로 잡아 제외.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]
+
 [tool.pyright]
 pythonVersion = "3.11"
 include = ["src", "tests"]

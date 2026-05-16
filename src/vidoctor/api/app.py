@@ -360,7 +360,7 @@ async def _analyze_stream(
         # asyncio.Queue로 producer/consumer 분리. graph 종료 시 sentinel(None)을 큐에
         # 넣어 main loop이 깔끔하게 빠져나오게 함 — graph_task와 queue.get()을 동시
         # await하던 이전 패턴은 race·cancel-leak 위험.
-        _SENTINEL = object()
+        _sentinel = object()
         loop = asyncio.get_running_loop()
         node_queue: asyncio.Queue[Any] = asyncio.Queue()
 
@@ -380,7 +380,7 @@ async def _analyze_stream(
                     str(tmp_path), category, on_node_complete=_on_node
                 )
             finally:
-                node_queue.put_nowait(_SENTINEL)
+                node_queue.put_nowait(_sentinel)
 
         graph_task = asyncio.create_task(_drive_graph())
 
@@ -390,7 +390,7 @@ async def _analyze_stream(
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
                 while True:
                     item = await node_queue.get()
-                    if item is _SENTINEL:
+                    if item is _sentinel:
                         break
                     event_name, payload = item
                     yield _sse(event_name, payload or {})
@@ -425,7 +425,10 @@ async def _analyze_stream(
         yield _sse(
             "error",
             {
-                "message": "분석 시간이 초과되어 중단되었습니다. 더 짧은 영상으로 다시 시도해주세요.",
+                "message": (
+                    "분석 시간이 초과되어 중단되었습니다. "
+                    "더 짧은 영상으로 다시 시도해주세요."
+                ),
                 "analysis_id": analysis_id,
             },
         )
