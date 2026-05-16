@@ -13,14 +13,12 @@ transcript는 영상별 JSON에 캐시되어 사전 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
-from pathlib import Path
 
 from vidoctor.audio.filler import detect_filler_events
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import load_or_transcribe, log_mlflow_run
+from vidoctor.eval._script_lib import build_eval_parser, load_or_transcribe, log_mlflow_run
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_filler_metrics
 
@@ -41,20 +39,7 @@ def _metrics_dict(label_intervals, events) -> dict[str, float]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="filler P/R/F1 + MLflow logging")
-    parser.add_argument("video_path", type=Path)
-    parser.add_argument("labels_csv", type=Path)
-    parser.add_argument(
-        "--run-name", required=True, help="MLflow run name (예: baseline_lecture, stage1_lecture)"
-    )
-    parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="transcript cache 무시하고 재추출",
-    )
-    parser.add_argument(
-        "--no-mlflow", action="store_true", help="MLflow 로그 생략 (디버그용)"
-    )
+    parser = build_eval_parser("filler P/R/F1 + MLflow logging")
     args = parser.parse_args()
 
     if not args.video_path.exists():

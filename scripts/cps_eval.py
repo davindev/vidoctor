@@ -15,7 +15,6 @@ transcript는 영상별 JSON에 캐시되어 임계 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
-import argparse
 import json
 import statistics
 import sys
@@ -41,6 +40,7 @@ from vidoctor.audio.pitch import (
 )
 from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
+    build_eval_parser,
     load_or_transcribe,
     log_mlflow_run,
     model_tag,
@@ -84,12 +84,7 @@ def _load_or_extract_pitch(video_path: Path, no_cache: bool):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="cps P/R/F1 + MLflow logging")
-    parser.add_argument("video_path", type=Path)
-    parser.add_argument("labels_csv", type=Path)
-    parser.add_argument("--run-name", required=True)
-    parser.add_argument("--no-cache", action="store_true")
-    parser.add_argument("--no-mlflow", action="store_true")
+    parser = build_eval_parser("cps P/R/F1 + MLflow logging")
     parser.add_argument(
         "--no-pitch",
         action="store_true",

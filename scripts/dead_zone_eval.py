@@ -15,7 +15,6 @@ SSIM 시계열은 영상·다운스케일·fps 동일하면 결정적이라 npz 
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -23,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import log_mlflow_run
+from vidoctor.eval._script_lib import build_eval_parser, log_mlflow_run
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
 from vidoctor.graph.state import Category
@@ -123,13 +122,8 @@ def _label_diagnostics(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="dead_zone P/R/F1 + MLflow logging (VAD)")
-    parser.add_argument("video_path", type=Path)
-    parser.add_argument("labels_csv", type=Path)
+    parser = build_eval_parser("dead_zone P/R/F1 + MLflow logging (VAD)")
     parser.add_argument("category", choices=["lecture", "vlog", "other"])
-    parser.add_argument("--run-name", required=True)
-    parser.add_argument("--no-cache", action="store_true")
-    parser.add_argument("--no-mlflow", action="store_true")
     parser.add_argument("--min-duration", type=float, default=None)
     parser.add_argument(
         "--flow-threshold",

@@ -15,7 +15,6 @@ content_gap은 LLM 1회 호출이라 baseline 측정이 곧 진단이다. 이 �
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import sys
@@ -25,6 +24,7 @@ from typing import cast
 
 from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
+    build_eval_parser,
     load_or_transcribe,
     log_mlflow_run,
 )
@@ -142,12 +142,7 @@ def _label_diagnostics(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="content_gap P/R/F1 + cost·latency + MLflow")
-    parser.add_argument("video_path", type=Path)
-    parser.add_argument("labels_csv", type=Path)
-    parser.add_argument("--run-name", required=True)
-    parser.add_argument("--no-cache", action="store_true", help="transcript cache 무시")
-    parser.add_argument("--no-mlflow", action="store_true")
+    parser = build_eval_parser("content_gap P/R/F1 + cost·latency + MLflow")
     parser.add_argument(
         "--category",
         default="lecture",
