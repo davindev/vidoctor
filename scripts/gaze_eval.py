@@ -25,7 +25,6 @@ from vidoctor.eval._script_lib import (
 )
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
-from vidoctor.graph.state import GazeEvent
 from vidoctor.vision.gaze import (
     MERGE_GAP_SEC,
     MIN_DURATION_SEC,
@@ -81,23 +80,6 @@ def _load_or_extract_pose(
     )
     _log.info("  → %d개 sample (캐시 저장: %s)", len(samples), cache.name)
     return samples
-
-
-def _detect_with_thresholds(
-    samples: list[PoseSample],
-    yaw_thr: float,
-    pitch_thr: float,
-    min_duration: float,
-    merge_gap: float,
-) -> list[GazeEvent]:
-    """sweep 임계로 samples_to_events 호출 — GazeConfig 키워드로 주입."""
-    cfg = GazeConfig(
-        yaw_threshold_deg=yaw_thr,
-        pitch_threshold_deg=pitch_thr,
-        min_duration_sec=min_duration,
-        merge_gap_sec=merge_gap,
-    )
-    return samples_to_events(samples, cfg)
 
 
 def _label_diagnostics(
@@ -242,7 +224,13 @@ def main() -> None:
             baseline_yaw, baseline_pitch,
         )
 
-    events = _detect_with_thresholds(samples, yaw_thr, pitch_thr, min_dur, merge_gap)
+    cfg = GazeConfig(
+        yaw_threshold_deg=yaw_thr,
+        pitch_threshold_deg=pitch_thr,
+        min_duration_sec=min_dur,
+        merge_gap_sec=merge_gap,
+    )
+    events = samples_to_events(samples, cfg)
 
     labels = load_labels(args.labels_csv)
     gaze_labels = filter_labels_by_dim(labels, _DIMENSION)

@@ -47,6 +47,8 @@ from vidoctor.eval.metrics import compute_cps_metrics
 
 _log = logging.getLogger(__name__)
 _DIMENSION = "cps"
+# 라벨 경계 ±패딩까지 진단 dump에 포함 (라벨러 컷팅 오차 흡수).
+_LABEL_PADDING_SEC = 1.0
 
 
 def _f0_cache_path(video_path: Path) -> Path:
@@ -165,7 +167,8 @@ def main() -> None:
                             else 0.0,
                         }
                         for w in windows
-                        if w.end > lbl.start - 1.0 and w.start < lbl.end + 1.0
+                        if w.end > lbl.start - _LABEL_PADDING_SEC
+                        and w.start < lbl.end + _LABEL_PADDING_SEC
                     ],
                 }
                 for lbl in cps_labels

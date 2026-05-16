@@ -43,15 +43,9 @@ EXPECTED_LECTURE: list[dict] = [
     {"start": 155, "end": 170, "dimension": "cps", "note": "1.7 CPS too_slow"},
 ]
 
-DUMP_FIELDS = (
-    "fillers",
-    "cps_anomalies",
-    "dead_zones",
-    "gaze_issues",
-    "content_gaps",
-    "suggestions",
-)
+DUMP_FIELDS = (*DIM_TO_STATE_FIELD.values(), "suggestions")
 
+# script.md 의도와 실제 영상 길이가 어긋날 때 매칭이 흔들리지 않도록 보수적 tolerance.
 OVERLAP_TOL = 5.0
 
 
@@ -68,11 +62,11 @@ def _events_dump(state: AnalysisState, field: str) -> list[dict]:
     ]
 
 
-def _print_lecture_match_table(state: AnalysisState) -> None:
-    """lecture EXPECTED_LECTURE 마커별 검출 hit 여부를 콘솔 표로 출력."""
-    print("\n=== expected vs detected (lecture markers) ===")
-    print(f"{'dim':<12} {'expected':<14} {'hits':<6} note")
-    print("-" * 70)
+def _log_lecture_match_table(state: AnalysisState) -> None:
+    """lecture EXPECTED_LECTURE 마커별 검출 hit 여부를 표로 로그."""
+    _log.info("=== expected vs detected (lecture markers) ===")
+    _log.info("%-12s %-14s %-6s note", "dim", "expected", "hits")
+    _log.info("-" * 70)
     for exp in EXPECTED_LECTURE:
         events = _events_dump(state, DIM_TO_STATE_FIELD[exp["dimension"]])
         hits = [
@@ -81,7 +75,10 @@ def _print_lecture_match_table(state: AnalysisState) -> None:
         ]
         rng = f"{int(exp['start'])}-{int(exp['end'])}s"
         mark = "✓" if hits else "✗"
-        print(f"{exp['dimension']:<12} {rng:<14} {mark}{len(hits):<5} {exp['note']}")
+        _log.info(
+            "%-12s %-14s %s%-5d %s",
+            exp["dimension"], rng, mark, len(hits), exp["note"],
+        )
 
 
 def main() -> None:
@@ -114,7 +111,7 @@ def main() -> None:
     _log.info("dump 저장: %s", out_path)
 
     if category == "lecture":
-        _print_lecture_match_table(state)
+        _log_lecture_match_table(state)
 
 
 if __name__ == "__main__":

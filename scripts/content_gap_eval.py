@@ -2,7 +2,7 @@
 
 사용법:
     uv run python scripts/content_gap_eval.py data/golden/inputs/lecture.mp4 \\
-        data/golden/labels/lecture_labels.csv --run-name baseline_lecture
+        data/golden/labels/lecture_labels.csv --category lecture --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def main() -> None:
     parser = build_eval_parser("content_gap P/R/F1 + cost·latency + MLflow")
     parser.add_argument(
         "--category",
-        default="lecture",
+        required=True,
         choices=["lecture", "other"],
         help="rubric 선택 (vlog는 비활성)",
     )

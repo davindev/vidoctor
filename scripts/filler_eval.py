@@ -68,17 +68,16 @@ def main() -> None:
         metrics["precision"], metrics["recall"], metrics["f1"],
     )
 
+    params = {
+        "video": args.video_path.name,
+        "label_count": len(filler_labels),
+        "detected_count": len(events),
+        "transcript_word_count": len(words),
+    }
+
     if not args.no_mlflow:
         log_mlflow_run(
-            experiment_name(_DIMENSION),
-            args.run_name,
-            params={
-                "video": args.video_path.name,
-                "label_count": len(filler_labels),
-                "detected_count": len(events),
-                "transcript_word_count": len(words),
-            },
-            metrics=metrics,
+            experiment_name(_DIMENSION), args.run_name, params=params, metrics=metrics
         )
 
     out = eval_dump_path(_DIMENSION, args.video_path.stem, args.run_name)
@@ -87,6 +86,7 @@ def main() -> None:
         {
             "video": args.video_path.name,
             "run_name": args.run_name,
+            "params": params,
             "metrics": metrics,
             "detected": [{"start": e.start, "end": e.end, "text": e.text} for e in events],
             "labels": filler_labels,
