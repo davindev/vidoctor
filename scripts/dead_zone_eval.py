@@ -2,7 +2,7 @@
 
 사용법:
     uv run python scripts/dead_zone_eval.py data/golden/inputs/lecture.mp4 \\
-        data/golden/labels/lecture_labels.csv lecture --run-name baseline_lecture
+        data/golden/labels/lecture_labels.csv --category lecture --run-name baseline_lecture
 """
 
 from __future__ import annotations
@@ -128,7 +128,12 @@ def _label_diagnostics(
 
 def main() -> None:
     parser = build_eval_parser("dead_zone P/R/F1 + MLflow logging (VAD)")
-    parser.add_argument("category", choices=["lecture", "vlog", "other"])
+    parser.add_argument(
+        "--category",
+        required=True,
+        choices=["lecture", "vlog", "other"],
+        help="영상 카테고리 (lecture/vlog/other) — min_duration·flow_threshold 기본값 결정",
+    )
     parser.add_argument(
         "--min-duration",
         type=float,

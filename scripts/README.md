@@ -50,7 +50,7 @@ data/golden/
 차원별 추가 인자:
 
 - **`cps_eval`** — `--no-pitch` (F0 multi-feature 비활성)
-- **`dead_zone_eval`** — positional `category` ∈ {lecture, vlog, other}, `--min-duration`, `--flow-threshold`
+- **`dead_zone_eval`** — `--category` ∈ {lecture, vlog, other} (required), `--min-duration`, `--flow-threshold`
 - **`gaze_eval`** — `--yaw-threshold`, `--pitch-threshold`, `--min-duration`, `--merge-gap`, `--no-baseline`
 - **`content_gap_eval`** — `--category` ∈ {lecture, other} (required), `--model` (예: gpt-4o, gpt-4o-mini)
 

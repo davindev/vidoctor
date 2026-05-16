@@ -35,9 +35,8 @@ _DIMENSION_SCRIPT: dict[Dimension, str] = {
     "gaze": "gaze_eval.py",
     "content_gap": "content_gap_eval.py",
 }
-# 차원별 category 인자 전달 방식. dead_zone은 positional, content_gap은 --category.
-_DIMS_WITH_POSITIONAL_CATEGORY: frozenset[Dimension] = frozenset({"dead_zone"})
-_DIMS_WITH_FLAG_CATEGORY: frozenset[Dimension] = frozenset({"content_gap"})
+# dead_zone·content_gap만 --category를 받는다 (다른 차원은 카테고리 무관).
+_DIMS_WITH_CATEGORY: frozenset[Dimension] = frozenset({"dead_zone", "content_gap"})
 
 
 def _build_invocation(
@@ -56,9 +55,7 @@ def _build_invocation(
         str(ROOT / "data" / "golden" / "inputs" / f"{video_name}.mp4"),
         str(ROOT / "data" / "golden" / "labels" / f"{video_name}_labels.csv"),
     ]
-    if dim in _DIMS_WITH_POSITIONAL_CATEGORY:
-        cmd.append(category)
-    if dim in _DIMS_WITH_FLAG_CATEGORY:
+    if dim in _DIMS_WITH_CATEGORY:
         cmd += ["--category", category]
     cmd += ["--run-name", run_name]
     if no_mlflow:
