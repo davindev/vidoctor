@@ -9,18 +9,23 @@ gaze/content_gap 라벨이 없음).
 사용법:
     uv run python scripts/eval_all.py --tag stage16
     uv run python scripts/eval_all.py --tag stage16 --videos lecture
+    uv run python scripts/eval_all.py --tag stage16 --dimensions filler cps
     uv run python scripts/eval_all.py --tag stage16 --no-mlflow --force
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 import time
 
 from vidoctor.config import ROOT
+from vidoctor.eval._script_lib import configure_eval_logging
 from vidoctor.graph.state import CATEGORY_DIMENSIONS, Category, Dimension
+
+_log = logging.getLogger(__name__)
 
 _VIDEOS: dict[str, Category] = {"lecture": "lecture", "vlog": "vlog"}
 _DIMENSION_SCRIPT: dict[Dimension, str] = {
@@ -30,10 +35,12 @@ _DIMENSION_SCRIPT: dict[Dimension, str] = {
     "gaze": "gaze_eval.py",
     "content_gap": "content_gap_eval.py",
 }
+# 자식 스크립트 중 positional category 인자를 요구하는 것. (현재 dead_zone만)
+_DIMS_REQUIRING_CATEGORY: frozenset[Dimension] = frozenset({"dead_zone"})
 
 
 def _build_invocation(
-    script: str,
+    dim: Dimension,
     video_name: str,
     category: Category,
     run_name: str,
@@ -41,13 +48,14 @@ def _build_invocation(
     no_mlflow: bool,
     force: bool,
 ) -> list[str]:
+    """차원별 *_eval.py subprocess 호출에 쓸 cmd 리스트를 만든다."""
     cmd = [
         sys.executable,
-        str(ROOT / "scripts" / script),
+        str(ROOT / "scripts" / _DIMENSION_SCRIPT[dim]),
         str(ROOT / "data" / "golden" / "inputs" / f"{video_name}.mp4"),
         str(ROOT / "data" / "golden" / "labels" / f"{video_name}_labels.csv"),
     ]
-    if script == "dead_zone_eval.py":
+    if dim in _DIMS_REQUIRING_CATEGORY:
         cmd.append(category)
     cmd += ["--run-name", run_name]
     if no_mlflow:
@@ -78,9 +86,18 @@ def main() -> None:
         default=None,
         help="실행할 차원 (default: 영상 카테고리의 활성 차원)",
     )
-    parser.add_argument("--no-mlflow", action="store_true")
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--no-mlflow",
+        action="store_true",
+        help="MLflow 기록 생략 (로컬 디버깅용)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="기존 dump 파일 덮어쓰기 허용 (기본: 충돌 시 중단)",
+    )
     args = parser.parse_args()
+    configure_eval_logging(args.tag)
 
     failures: list[tuple[str, str]] = []
     started = time.perf_counter()
@@ -90,30 +107,30 @@ def main() -> None:
         for dim in active:
             if dim not in _DIMENSION_SCRIPT:
                 continue
-            script = _DIMENSION_SCRIPT[dim]
             run_name = f"{args.tag}_{video_name}"
             cmd = _build_invocation(
-                script,
+                dim,
                 video_name,
                 category,
                 run_name,
                 no_mlflow=args.no_mlflow,
                 force=args.force,
             )
-            print(f"\n=== [{dim}] {video_name} → {run_name} ===")
-            print("  $ " + " ".join(cmd))
+            _log.info("=== [%s] %s → %s ===", dim, video_name, run_name)
+            _log.info("$ %s", " ".join(cmd))
             result = subprocess.run(cmd)
             if result.returncode != 0:
                 failures.append((dim, video_name))
-                print(f"  ✗ FAILED (exit {result.returncode})")
+                _log.error("✗ FAILED (exit %d)", result.returncode)
 
     elapsed = time.perf_counter() - started
-    print(f"\n{'=' * 60}\nelapsed: {elapsed:.1f}s")
+    _log.info("=" * 60)
+    _log.info("elapsed: %.1fs", elapsed)
     if failures:
         for dim, video in failures:
-            print(f"  ✗ {dim} / {video}")
+            _log.error("✗ %s / %s", dim, video)
         sys.exit(f"{len(failures)} 차원 실패")
-    print("  ✓ 전부 성공")
+    _log.info("✓ 전부 성공")
 
 
 if __name__ == "__main__":
