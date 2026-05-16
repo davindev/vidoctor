@@ -17,12 +17,18 @@ pose 시계열은 영상·ROI 추정·SAMPLE_FPS 동일하면 결정적이라 np
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import build_eval_parser, log_mlflow_run, write_eval_dump
+from vidoctor.eval._script_lib import (
+    build_eval_parser,
+    configure_eval_logging,
+    log_mlflow_run,
+    write_eval_dump,
+)
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
 from vidoctor.vision.gaze import (
@@ -38,6 +44,7 @@ from vidoctor.vision.gaze import (
     _subtract_baseline,
 )
 
+_log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-gaze"
 
 
@@ -55,7 +62,7 @@ def _load_or_extract_pose(
 ) -> list[_PoseSample]:
     cache = _pose_cache_path(video_path)
     if cache.exists() and not no_cache:
-        print(f"loading cached pose: {cache.name}")
+        _log.info("loading cached pose: %s", cache.name)
         d = np.load(cache)
         ts, yaws, pitches = d["t"], d["yaw"], d["pitch"]
         return [
@@ -63,10 +70,10 @@ def _load_or_extract_pose(
             for i in range(len(ts))
         ]
 
-    print(f"extracting head pose for {video_path.name} (ROI + landmarker, slow)...")
+    _log.info("extracting head pose for %s (ROI + landmarker, slow)...", video_path.name)
     samples = _sample_video_pose(str(video_path))
     if not samples:
-        print("  → 0 samples (ROI 추정 실패 — 화자 얼굴 미검출)")
+        _log.warning("  → 0 samples (ROI 추정 실패 — 화자 얼굴 미검출)")
         return samples
     np.savez(
         cache,
@@ -74,7 +81,7 @@ def _load_or_extract_pose(
         yaw=np.array([s.yaw for s in samples], dtype=np.float64),
         pitch=np.array([s.pitch for s in samples], dtype=np.float64),
     )
-    print(f"  → {len(samples)} samples (cached → {cache.name})")
+    _log.info("  → %d samples (cached → %s)", len(samples), cache.name)
     return samples
 
 
@@ -217,6 +224,7 @@ def main() -> None:
         help="baseline 차감을 끄고 절대 yaw/pitch에 임계 적용 (디버그용).",
     )
     args = parser.parse_args()
+    configure_eval_logging(args.run_name)
 
     yaw_thr = args.yaw_threshold if args.yaw_threshold is not None else YAW_THRESHOLD_DEG
     pitch_thr = (
@@ -230,9 +238,9 @@ def main() -> None:
     baseline_yaw = baseline_pitch = 0.0
     if not args.no_baseline:
         samples, baseline_yaw, baseline_pitch = _subtract_baseline(samples)
-        print(
-            f"  → baseline subtracted: yaw_median={baseline_yaw:+.2f}° "
-            f"pitch_median={baseline_pitch:+.2f}°"
+        _log.info(
+            "  → baseline subtracted: yaw_median=%+.2f° pitch_median=%+.2f°",
+            baseline_yaw, baseline_pitch,
         )
 
     events = _detect_with_thresholds(samples, yaw_thr, pitch_thr, min_dur, merge_gap)
@@ -251,14 +259,14 @@ def main() -> None:
         "f1": m.f1,
         "temporal_iou_mean": m.temporal_iou_mean,
     }
-    print(
-        f"\n[{args.run_name}] gaze: TP={m.tp} FP={m.fp} FN={m.fn} "
-        f"P={m.precision:.3f} R={m.recall:.3f} F1={m.f1:.3f}"
+    _log.info(
+        "gaze: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
+        m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
     )
-    print(
-        f"  yaw_thr={yaw_thr:.1f}° pitch_thr={pitch_thr:.1f}° "
-        f"min_dur={min_dur:.1f}s merge_gap={merge_gap:.2f}s\n"
-        f"  pose_samples={len(samples)} detected_events={len(events)}"
+    _log.info(
+        "  yaw_thr=%.1f° pitch_thr=%.1f° min_dur=%.1fs merge_gap=%.2fs "
+        "pose_samples=%d detected_events=%d",
+        yaw_thr, pitch_thr, min_dur, merge_gap, len(samples), len(events),
     )
 
     diag = _label_diagnostics(gaze_intervals, samples, yaw_thr, pitch_thr)
@@ -309,7 +317,7 @@ def main() -> None:
         },
         force=args.force,
     )
-    print(f"  → dumped {out.name}")
+    _log.info("  → dumped %s", out.name)
 
 
 if __name__ == "__main__":

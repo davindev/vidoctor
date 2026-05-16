@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import cast
@@ -24,6 +25,7 @@ from typing import cast
 from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
+    configure_eval_logging,
     load_or_transcribe,
     log_mlflow_run,
     write_eval_dump,
@@ -50,6 +52,7 @@ from vidoctor.vision.content_gap import (
     _sample_frames,
 )
 
+_log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-content_gap"
 
 
@@ -155,10 +158,11 @@ def main() -> None:
         help="LLM model id (gpt-4o / gpt-4o-mini 등)",
     )
     args = parser.parse_args()
+    configure_eval_logging(args.run_name)
 
     transcript = load_or_transcribe(args.video_path, args.no_cache)
 
-    print(f"sampling frames + invoking {args.model}...")
+    _log.info("sampling frames + invoking %s...", args.model)
     category = cast(Category, args.category)
     result = asyncio.run(
         _detect_with_meta(args.video_path, transcript, category, args.model)
@@ -191,25 +195,24 @@ def main() -> None:
         "image_count": len(samples),
     }
 
-    print(
-        f"\n[{args.run_name}] content_gap: TP={m.tp} FP={m.fp} FN={m.fn} "
-        f"P={m.precision:.3f} R={m.recall:.3f} F1={m.f1:.3f}"
+    _log.info(
+        "content_gap: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
+        m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
     )
-    print(
-        f"  model={args.model} images={len(samples)} "
-        f"latency={metrics['latency_sec']:.2f}s "
-        f"prompt_tok={metrics['prompt_tokens']} "
-        f"completion_tok={metrics['completion_tokens']} "
-        f"cost=${metrics['cost_usd']:.4f}"
+    _log.info(
+        "  model=%s images=%d latency=%.2fs "
+        "prompt_tok=%d completion_tok=%d cost=$%.4f",
+        args.model, len(samples), metrics["latency_sec"],
+        metrics["prompt_tokens"], metrics["completion_tokens"], metrics["cost_usd"],
     )
 
     diag = _label_diagnostics(cg_intervals, samples, transcript)
     for d in diag:
         ls, le = d["label"]["start"], d["label"]["end"]
         n_frames = len(d["frames_covering_label"])
-        print(
-            f"  label[{ls:.0f}-{le:.0f}s]: frames_in_window={n_frames} "
-            f"words_in_label={d['n_words_in_label']}"
+        _log.info(
+            "  label[%.0f-%.0fs]: frames_in_window=%d words_in_label=%d",
+            ls, le, n_frames, d["n_words_in_label"],
         )
 
     params = {
@@ -264,7 +267,7 @@ def main() -> None:
         },
         force=args.force,
     )
-    print(f"  → dumped {out.name}")
+    _log.info("  → dumped %s", out.name)
 
 
 if __name__ == "__main__":

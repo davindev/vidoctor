@@ -13,10 +13,13 @@ transcript는 영상별 JSON에 캐시되어 사전 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
+import logging
+
 from vidoctor.audio.filler import detect_filler_events
 from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
+    configure_eval_logging,
     load_or_transcribe,
     log_mlflow_run,
     write_eval_dump,
@@ -24,6 +27,7 @@ from vidoctor.eval._script_lib import (
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_filler_metrics
 
+_log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-filler"
 
 
@@ -43,6 +47,7 @@ def _metrics_dict(label_intervals, events) -> dict[str, float]:
 def main() -> None:
     parser = build_eval_parser("filler P/R/F1 + MLflow logging")
     args = parser.parse_args()
+    configure_eval_logging(args.run_name)
 
     words = load_or_transcribe(args.video_path, args.no_cache)
 
@@ -52,10 +57,10 @@ def main() -> None:
     filler_labels = [(lbl.start, lbl.end) for lbl in labels if lbl.dimension == "filler"]
 
     metrics = _metrics_dict(filler_labels, events)
-    print(
-        f"\n[{args.run_name}] filler: TP={metrics['tp']} FP={metrics['fp']} "
-        f"FN={metrics['fn']} P={metrics['precision']:.3f} "
-        f"R={metrics['recall']:.3f} F1={metrics['f1']:.3f}"
+    _log.info(
+        "filler: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
+        metrics["tp"], metrics["fp"], metrics["fn"],
+        metrics["precision"], metrics["recall"], metrics["f1"],
     )
 
     if not args.no_mlflow:
@@ -94,7 +99,7 @@ def main() -> None:
         },
         force=args.force,
     )
-    print(f"  → dumped {out.name}")
+    _log.info("  → dumped %s", out.name)
 
 
 if __name__ == "__main__":

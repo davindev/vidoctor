@@ -15,6 +15,7 @@ transcript는 영상별 JSON에 캐시되어 임계 튜닝 반복 시 transcribe
 
 from __future__ import annotations
 
+import logging
 import statistics
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from vidoctor.audio.pitch import (
 from vidoctor.config import ROOT
 from vidoctor.eval._script_lib import (
     build_eval_parser,
+    configure_eval_logging,
     load_or_transcribe,
     log_mlflow_run,
     model_tag,
@@ -47,6 +49,7 @@ from vidoctor.eval._script_lib import (
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import compute_cps_metrics
 
+_log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-cps"
 
 
@@ -72,13 +75,13 @@ def _load_or_extract_pitch(video_path: Path, no_cache: bool):
     """오디오에서 F0 시계열 추출 (npz cache). 동일 cache는 transcript와 무관."""
     cache = _f0_cache_path(video_path)
     if cache.exists() and not no_cache:
-        print(f"loading cached F0: {cache.name}")
+        _log.info("loading cached F0: %s", cache.name)
         d = np.load(cache)
         return d["f0"], d["times"]
-    print(f"extracting F0 from {video_path.name}...")
+    _log.info("extracting F0 from %s...", video_path.name)
     f0, times = extract_pitch_track(str(video_path))
     np.savez(cache, f0=f0, times=times)
-    print(f"  → {len(f0)} frames (cached → {cache.name})")
+    _log.info("  → %d frames (cached → %s)", len(f0), cache.name)
     return f0, times
 
 
@@ -90,6 +93,7 @@ def main() -> None:
         help="F0 multi-feature 비활성화 (cps z-score 단독 — 비교 측정용)",
     )
     args = parser.parse_args()
+    configure_eval_logging(args.run_name)
 
     words = load_or_transcribe(args.video_path, args.no_cache)
 
@@ -111,14 +115,14 @@ def main() -> None:
     cps_labels = [lbl for lbl in labels if lbl.dimension == "cps"]
 
     metrics = _metrics_dict(cps_labels, events)
-    print(
-        f"\n[{args.run_name}] cps: TP={metrics['tp']} FP={metrics['fp']} "
-        f"FN={metrics['fn']} P={metrics['precision']:.3f} "
-        f"R={metrics['recall']:.3f} F1={metrics['f1']:.3f}"
+    _log.info(
+        "cps: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
+        metrics["tp"], metrics["fp"], metrics["fn"],
+        metrics["precision"], metrics["recall"], metrics["f1"],
     )
-    print(
-        f"  windows={len(windows)} mean={win_mean:.2f} std={win_std:.2f} "
-        f"events={len(events)}"
+    _log.info(
+        "  windows=%d mean=%.2f std=%.2f events=%d",
+        len(windows), win_mean, win_std, len(events),
     )
 
     params = {
@@ -182,7 +186,7 @@ def main() -> None:
         },
         force=args.force,
     )
-    print(f"  → dumped {out.name}")
+    _log.info("  → dumped %s", out.name)
 
 
 if __name__ == "__main__":

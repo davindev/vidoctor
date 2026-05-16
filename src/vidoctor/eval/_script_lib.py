@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,27 @@ import mlflow
 from vidoctor.audio.transcribe import transcribe_video
 from vidoctor.config import get_settings
 from vidoctor.graph.state import Word
+
+
+def configure_eval_logging(run_name: str, *, level: int = logging.INFO) -> None:
+    """평가 스크립트 진입 1회 호출. 모든 로그 라인에 `[run_name] [logger]` 접두를
+    붙여 동시 실행 시 출력 분리 가능. JSON 포매터(production용)과 분리 — 평가는
+    interactive 가독성 우선.
+
+    grep `[stage11_lecture]`로 한 run의 로그만, `[scripts.cps_eval]`로 한 스크립트의
+    로그만 골라낼 수 있다.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter(f"[{run_name}] [%(name)s] %(message)s")
+    )
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root.addHandler(handler)
+    root.setLevel(level)
+
+_log = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _GOLDEN_DIR = _ROOT / "data" / "golden"
@@ -94,16 +117,16 @@ def load_or_transcribe(video_path: Path, no_cache: bool) -> list[Word]:
     """캐시된 transcript JSON이 있으면 그걸 로드, 없으면 WhisperX 호출 + 캐시 작성."""
     cache = transcript_cache_path(video_path)
     if cache.exists() and not no_cache:
-        print(f"loading cached transcript: {cache.name}")
+        _log.info("loading cached transcript: %s", cache.name)
         data = json.loads(cache.read_text())
         return [Word(**w) for w in data]
 
-    print(f"transcribing {video_path.name}...")
+    _log.info("transcribing %s...", video_path.name)
     words, _ = asyncio.run(transcribe_video(str(video_path)))
     cache.write_text(
         json.dumps([w.model_dump() for w in words], ensure_ascii=False, indent=2)
     )
-    print(f"  → {len(words)} words (cached → {cache.name})")
+    _log.info("  → %d words (cached → %s)", len(words), cache.name)
     return words
 
 
@@ -121,4 +144,4 @@ def log_mlflow_run(
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params(params)
         mlflow.log_metrics(metrics)
-    print(f"  → mlflow run logged ({experiment} / {run_name})")
+    _log.info("  → mlflow run logged (%s / %s)", experiment, run_name)

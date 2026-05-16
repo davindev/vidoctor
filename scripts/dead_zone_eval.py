@@ -15,12 +15,18 @@ SSIM 시계열은 영상·다운스케일·fps 동일하면 결정적이라 npz 
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import build_eval_parser, log_mlflow_run, write_eval_dump
+from vidoctor.eval._script_lib import (
+    build_eval_parser,
+    configure_eval_logging,
+    log_mlflow_run,
+    write_eval_dump,
+)
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
 from vidoctor.graph.state import Category
@@ -37,6 +43,7 @@ from vidoctor.vision.dead_zone import (
     _silent_intervals_from_audio,
 )
 
+_log = logging.getLogger(__name__)
 _EXPERIMENT_NAME = "vidoctor-dead_zone"
 
 
@@ -55,14 +62,14 @@ def _load_or_extract_flow(
 ) -> tuple[np.ndarray, np.ndarray, float]:
     cache = _flow_cache_path(video_path)
     if cache.exists() and not no_cache:
-        print(f"loading cached flow: {cache.name}")
+        _log.info("loading cached flow: %s", cache.name)
         d = np.load(cache)
         return d["curr_times"], d["flows"], float(d["duration"])
 
-    print(f"computing optical flow for {video_path.name}...")
+    _log.info("computing optical flow for %s...", video_path.name)
     curr_t, flows, duration = _flow_series(str(video_path))
     np.savez(cache, curr_times=curr_t, flows=flows, duration=duration)
-    print(f"  → {len(flows)} samples, duration={duration:.1f}s (cached → {cache.name})")
+    _log.info("  → %d samples, duration=%.1fs (cached → %s)", len(flows), duration, cache.name)
     return curr_t, flows, duration
 
 
@@ -131,6 +138,7 @@ def main() -> None:
         "기본=카테고리 상수 (lecture 0.5, vlog/other 5.0).",
     )
     args = parser.parse_args()
+    configure_eval_logging(args.run_name)
 
     category: Category = args.category
     cfg = CATEGORY_CONFIG[category]
@@ -144,10 +152,10 @@ def main() -> None:
     )
 
     curr_times, flows, duration = _load_or_extract_flow(args.video_path, args.no_cache)
-    print("loading audio + VAD...")
+    _log.info("loading audio + VAD...")
     audio = _load_audio_or_empty(str(args.video_path))
     silent = _silent_intervals_from_audio(audio, duration)
-    print(f"  → {len(silent)} silent intervals")
+    _log.info("  → %d silent intervals", len(silent))
 
     events = _detect(silent, curr_times, flows, min_duration, flow_threshold)
 
@@ -165,13 +173,13 @@ def main() -> None:
         "f1": m.f1,
         "temporal_iou_mean": m.temporal_iou_mean,
     }
-    print(
-        f"\n[{args.run_name}] dead_zone({category}): TP={m.tp} FP={m.fp} FN={m.fn} "
-        f"P={m.precision:.3f} R={m.recall:.3f} F1={m.f1:.3f}"
+    _log.info(
+        "dead_zone(%s): TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
+        category, m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
     )
-    print(
-        f"  min_dur={min_duration:.1f}s flow_max={flow_threshold:.3f}\n"
-        f"  silent_intervals={len(silent)} events={len(events)}"
+    _log.info(
+        "  min_dur=%.1fs flow_max=%.3f silent_intervals=%d events=%d",
+        min_duration, flow_threshold, len(silent), len(events),
     )
 
     diag = _label_diagnostics(dz_intervals, silent, curr_times, flows)
@@ -218,7 +226,7 @@ def main() -> None:
         },
         force=args.force,
     )
-    print(f"  → dumped {out.name}")
+    _log.info("  → dumped %s", out.name)
 
 
 if __name__ == "__main__":
