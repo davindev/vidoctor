@@ -1,16 +1,11 @@
 """검출 vs 라벨 매칭 + 차원별 F1.
 
 차원별 매칭 전략:
-- **filler**: point-in-interval. 라벨러는 burst 구간으로 묶고 detector는 단발 어휘별
-  (0.1~0.5초)이라 IoU로는 단위 mismatch. 라벨 구간 안에 detected 시작점이 1개 이상
-  들어가면 그 라벨 = TP. burst 안 detected는 모두 "검출 기여"로 묶여 FP에 카운트 X.
-- **cps**: 라벨 ±1초 확장 후 IoU greedy 1:1 + kind(too_fast/too_slow) 일치 필수.
-  방향 정보가 사용자 가시 의미의 핵심이라 반대 kind 매칭은 가짜 TP.
-- **dead_zone / gaze / content_gap**: IoU greedy 1:1 매칭.
+- filler: point-in-interval (라벨러 burst vs detector 단발 mismatch)
+- cps: ±1s 확장 IoU greedy + kind(too_fast/too_slow) 일치 필수
+- dead_zone / gaze / content_gap: IoU greedy 1:1
 
-IoU 임계도 차원별:
-- content_gap은 LLM 출력의 시간 정밀도가 낮아 0.2로 완화
-- 그 외는 기본 0.3
+IoU 임계는 기본 0.3, content_gap만 LLM 정밀도 낮아 0.2로 완화.
 """
 
 from __future__ import annotations
@@ -21,25 +16,13 @@ from typing import Any
 from vidoctor.eval.labels import GoldenLabel
 from vidoctor.graph.state import DIM_TO_STATE_FIELD, AnalysisState, Dimension
 
-# 기본 IoU 임계. 라벨링·detector 양쪽 시간 정밀도가 ±수 초 흔들리는 걸 받아주되
-# 잘못된 우연 매칭은 거름.
+Interval = tuple[float, float]
+
+# match_events default 임계. 평가 파이프라인은 DIM_IOU_THRESHOLD 명시 전달.
 IOU_THRESHOLD = 0.3
 
-# 매칭 전략이 다른 차원. 라벨러는 burst, detector는 단발이라 IoU 대신 point-in-interval.
-POINT_DIMENSIONS: frozenset[Dimension] = frozenset({"filler"})
-
-# Boundary tolerance — 라벨 영역을 ±이 값(초)만큼 확장한 뒤 detection point가 그 안에
-# 들어오면 매칭으로 본다. 라벨러가 영상 플레이어에서 1초 단위로 라운딩한 정밀도를
-# ASR ±20ms 정밀도와 정합시키기 위함. 음성 disfluency 표준은 200~500ms이지만 우리
-# 라벨이 1초 단위라 ±1s 채택 (다른 burst를 흡수하지 않는 sweet spot).
-FILLER_TOLERANCE_SEC = 1.0
-
-# cps 라벨도 1초 단위 라운딩이라 양쪽 ±1s 확장 후 IoU 매칭. 라벨 길이가 4~8초로 충분히
-# 길어 확장에 의한 IoU 분모 증가 영향이 작음.
-CPS_TOLERANCE_SEC = 1.0
-
-# IoU 매칭 차원의 임계. content_gap은 LLM 출력의 시간 정밀도가 떨어져 완화.
-# IoU 매칭 차원만 명시 — POINT_DIMENSIONS 차원은 들어가지 않음 (직접 조회 시 KeyError로 빠른 실패).
+# 차원별 IoU 임계 — content_gap만 LLM 정밀도 낮아 완화. filler 의도적 부재로
+# 잘못 조회 시 KeyError 빠른 실패.
 DIM_IOU_THRESHOLD: dict[Dimension, float] = {
     "cps": 0.3,
     "dead_zone": 0.3,
@@ -47,7 +30,12 @@ DIM_IOU_THRESHOLD: dict[Dimension, float] = {
     "content_gap": 0.2,
 }
 
-Interval = tuple[float, float]
+# IoU 대신 point-in-interval 매칭 차원.
+POINT_DIMENSIONS: frozenset[Dimension] = frozenset({"filler"})
+
+# 라벨러 1초 단위 라운딩 흡수용 ±확장.
+FILLER_TOLERANCE_SEC = 1.0
+CPS_TOLERANCE_SEC = 1.0
 
 
 @dataclass
@@ -135,18 +123,13 @@ def match_points_in_intervals(
     detected_starts: list[float],
     tolerance: float = 0.0,
 ) -> tuple[set[int], set[int]]:
-    """라벨 구간 안에 detected 시작점이 1개 이상 들어가면 그 라벨 = 매칭.
+    """라벨 구간 안에 detected 시작점이 들어가면 그 라벨 = 매칭.
 
-    burst 라벨(예: 45~68s) + 단발 detected(예: 66.4s)의 mismatch를 처리하기 위함.
-    한 라벨에 detected 여러 개가 들어가도 그 detected들은 "검출 기여"로 모두 매칭됨 처리
-    (FP에 안 들어감) — detector가 잘게 쪼갠 게 잘못이 아니므로.
+    burst 라벨 + 단발 detected의 단위 mismatch 처리용. 한 라벨에 detected 여러
+    개가 들어가도 모두 "검출 기여"로 묶여 FP에 카운트되지 않음.
 
-    경계 정책: half-open `[l_start - tolerance, l_end + tolerance)`. tolerance=0이면
-    IoU의 touching=0 컨벤션과 일관 — 인접 라벨 끝점이 같은 시각이면 detected는 한 라벨에만
-    매칭. tolerance>0이면 양 쪽 끝이 확장되어 인접 라벨 사이에 검출이 들어가면 둘 다에
-    매칭될 수 있음 (사용자 가시 의미상 둘 다의 finding으로 간주해도 무해).
-
-    반환: (매칭된 label idx 집합, 매칭된 detected idx 집합).
+    경계는 half-open `[l_start - tolerance, l_end + tolerance)`. tolerance=0이면
+    인접 라벨 끝점이 같은 시각이어도 detected는 한 라벨에만 매칭.
     """
     matched_labels: set[int] = set()
     matched_detected: set[int] = set()
@@ -161,11 +144,9 @@ def match_points_in_intervals(
 def compute_filler_metrics(
     dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
-    """filler 차원 단독 평가. point-in-interval 매칭 + tolerance.
+    """filler 차원 단독 평가 — point-in-interval + ±tolerance.
 
-    `compute_metrics`의 차원 분기에서도 사용하고, 외부 평가 스크립트에서도 직접 import해
-    같은 산식을 공유한다 — 한쪽만 바꿔서 평가 수치가 silently divergent 되는 걸 방지.
-    iou_sum은 의미 없으므로 0으로 유지.
+    compute_metrics와 scripts/filler_eval.py가 같은 산식을 공유하기 위해 분리.
     """
     detected_starts = [e.start for e in events]
     matched_labels, matched_detected = match_points_in_intervals(
@@ -182,11 +163,9 @@ def compute_filler_metrics(
 def compute_cps_metrics(
     cps_labels: list[GoldenLabel], events: list[Any]
 ) -> DimensionMetrics:
-    """cps 차원 단독 평가. 라벨 ±CPS_TOLERANCE_SEC 확장 IoU + kind 일치 greedy 1:1.
+    """cps 차원 단독 평가 — 라벨 ±tolerance IoU + kind 일치 greedy 1:1.
 
-    `compute_metrics`의 cps 분기와 외부 평가 스크립트에서 동일한 산식을 공유한다.
-    kind가 다른 (label, detected) 쌍은 IoU 계산 전에 후보에서 제외 → 반대 방향
-    오분류는 절대 TP로 잡히지 않는다.
+    kind가 다른 쌍은 후보 단계에서 제외 → 반대 방향 오분류 TP 차단.
     """
     expanded: list[Interval] = [
         (lbl.start - CPS_TOLERANCE_SEC, lbl.end + CPS_TOLERANCE_SEC)
@@ -195,6 +174,7 @@ def compute_cps_metrics(
     detected: list[Interval] = [(e.start, e.end) for e in events]
     threshold = DIM_IOU_THRESHOLD["cps"]
 
+    # kind 필터 때문에 match_events 재사용 안 함 (cps 전용 파라미터 leak 회피).
     candidates: list[tuple[int, int, float]] = []
     for li, lab in enumerate(expanded):
         for di, det in enumerate(detected):
@@ -227,7 +207,7 @@ def compute_cps_metrics(
 def _compute_iou_metrics(
     dim: Dimension, dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
-    """fallback 없이 직접 조회 — POINT_DIMENSIONS 차원이 잘못 분기되면 KeyError로 빠른 실패."""
+    """IoU greedy 매칭 + DimensionMetrics 패키징 — dead_zone/gaze/content_gap 공용."""
     dim_detected: list[Interval] = [(e.start, e.end) for e in events]
     matches, unmatched_lbl, unmatched_det = match_events(
         dim_labels, dim_detected, DIM_IOU_THRESHOLD[dim]
@@ -252,6 +232,7 @@ def compute_metrics(state: AnalysisState, labels: list[GoldenLabel]) -> EvalRepo
         dim_labels: list[Interval] = [
             (lbl.start, lbl.end) for lbl in labels if lbl.dimension == dim
         ]
+        # 동적 키라 TypedDict 정적 검증 불가. state 값이 명시적 None일 수 있어 or [].
         events: list[Any] = list(state.get(field_name, []) or [])  # type: ignore[literal-required]
 
         if not dim_labels and not events:
