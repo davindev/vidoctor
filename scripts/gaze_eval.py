@@ -25,6 +25,7 @@ from vidoctor.eval._script_lib import (
 )
 from vidoctor.eval.labels import load_labels
 from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
+from vidoctor.graph.state import GazeEvent
 from vidoctor.vision.gaze import (
     MERGE_GAP_SEC,
     MIN_DURATION_SEC,
@@ -55,9 +56,10 @@ def _pose_cache_path(video_path: Path) -> Path:
 def _load_or_extract_pose(
     video_path: Path, no_cache: bool
 ) -> list[PoseSample]:
+    """head pose 시계열 추출 (npz 캐시). ROI + landmarker 가장 무거운 단계 회피."""
     cache = _pose_cache_path(video_path)
     if cache.exists() and not no_cache:
-        _log.info("loading cached pose: %s", cache.name)
+        _log.info("캐시된 pose 로드: %s", cache.name)
         d = np.load(cache)
         ts, yaws, pitches = d["t"], d["yaw"], d["pitch"]
         return [
@@ -65,10 +67,10 @@ def _load_or_extract_pose(
             for i in range(len(ts))
         ]
 
-    _log.info("extracting head pose for %s (ROI + landmarker, slow)...", video_path.name)
+    _log.info("head pose 추출 중 (ROI + landmarker, 느림): %s", video_path.name)
     samples = sample_video_pose(str(video_path))
     if not samples:
-        _log.warning("  → 0 samples (ROI 추정 실패 — 화자 얼굴 미검출)")
+        _log.warning("  → sample 0개 (ROI 추정 실패 — 화자 얼굴 미검출)")
         return samples
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
@@ -77,7 +79,7 @@ def _load_or_extract_pose(
         yaw=np.array([s.yaw for s in samples], dtype=np.float64),
         pitch=np.array([s.pitch for s in samples], dtype=np.float64),
     )
-    _log.info("  → %d samples (cached → %s)", len(samples), cache.name)
+    _log.info("  → %d개 sample (캐시 저장: %s)", len(samples), cache.name)
     return samples
 
 
@@ -87,7 +89,7 @@ def _detect_with_thresholds(
     pitch_thr: float,
     min_duration: float,
     merge_gap: float,
-) -> list:
+) -> list[GazeEvent]:
     """sweep 임계로 samples_to_events 호출 — GazeConfig 키워드로 주입."""
     cfg = GazeConfig(
         yaw_threshold_deg=yaw_thr,
@@ -166,6 +168,7 @@ def _label_diagnostics(
 
 
 def _global_pose_summary(samples: list[PoseSample]) -> dict:
+    """영상 전체 pose 시계열의 분포 요약 (yaw·pitch의 median/percentile)."""
     if not samples:
         return {"n_samples": 0}
     yaws = np.array([s.yaw for s in samples])
@@ -217,7 +220,7 @@ def main() -> None:
     parser.add_argument(
         "--no-baseline",
         action="store_true",
-        help="baseline 차감을 끄고 절대 yaw/pitch에 임계 적용 (디버그용).",
+        help="baseline 차감 비활성화. 절대 yaw/pitch에 임계 적용",
     )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)
@@ -235,7 +238,7 @@ def main() -> None:
     if not args.no_baseline:
         samples, baseline_yaw, baseline_pitch = subtract_baseline(samples)
         _log.info(
-            "  → baseline subtracted: yaw_median=%+.2f° pitch_median=%+.2f°",
+            "  → baseline 차감: yaw_median=%+.2f° pitch_median=%+.2f°",
             baseline_yaw, baseline_pitch,
         )
 
@@ -245,7 +248,7 @@ def main() -> None:
     gaze_labels = filter_labels_by_dim(labels, _DIMENSION)
     gaze_intervals = [(lbl.start, lbl.end) for lbl in gaze_labels]
 
-    m = _compute_iou_metrics("gaze", gaze_intervals, events)
+    m = _compute_iou_metrics(_DIMENSION, gaze_intervals, events)
     metrics = metrics_to_dict(m)
     _log.info(
         "gaze: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
