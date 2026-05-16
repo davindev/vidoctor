@@ -1,6 +1,6 @@
-"""실제 WhisperX 통합 테스트.
+"""ASR transcribe 테스트 — 파일 부재 fail-fast 단위 + 실 WhisperX 통합.
 
-기본은 skip (모델 다운로드 + 추론에 수 분 소요).
+통합 테스트는 모델 다운로드 + 추론에 수 분 소요. 기본 skip.
 실행: VIDOCTOR_RUN_INTEGRATION=1 uv run pytest tests/test_audio.py -v
 """
 
@@ -11,10 +11,30 @@ from pathlib import Path
 
 import pytest
 
-from vidoctor.audio.transcribe import transcribe_video
+from vidoctor.audio.transcribe import _transcribe_sync, transcribe_video
 
 INTEGRATION_ENABLED = os.environ.get("VIDOCTOR_RUN_INTEGRATION") == "1"
 SAY_AVAILABLE = shutil.which("say") is not None
+
+
+# ---------------------------------------------------------------------------
+# 파일 부재 fail-fast — 비싼 WhisperX 로드 전에 즉시 abort 회귀 가드
+# ---------------------------------------------------------------------------
+
+
+def test_transcribe_sync_raises_on_missing_file(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="미디어 파일 없음"):
+        _transcribe_sync(str(tmp_path / "nope.mp4"))
+
+
+async def test_transcribe_video_propagates_missing_file_error(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="미디어 파일 없음"):
+        await transcribe_video(str(tmp_path / "nope.mp4"))
+
+
+# ---------------------------------------------------------------------------
+# 실 WhisperX 통합 (skip-by-default)
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
