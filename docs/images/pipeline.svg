@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 480" font-family="sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect width="1260" height="480" fill="#fafaf9"/>
+  <text x="32" y="40" font-size="20" font-weight="600" fill="#1c1917">LangGraph 파이프라인 — 카테고리별 동적 fan-out</text>
+
+  <!-- START -->
+  <g>
+    <circle cx="80" cy="240" r="32" fill="#e7e5e4" stroke="#57534e" stroke-width="1.5"/>
+    <text x="80" y="246" text-anchor="middle" font-size="13" font-weight="600" fill="#1c1917">START</text>
+  </g>
+
+  <line x1="114" y1="240" x2="158" y2="240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- transcribe -->
+  <g>
+    <rect x="160" y="208" width="170" height="64" rx="10" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <text x="245" y="234" text-anchor="middle" font-size="14" font-weight="600" fill="#831843">transcribe</text>
+    <text x="245" y="254" text-anchor="middle" font-size="11" fill="#9d174d">WhisperX (KsponSpeech)</text>
+  </g>
+
+  <line x1="332" y1="240" x2="378" y2="240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- conditional fan-out (diamond) -->
+  <g>
+    <polygon points="460,180 540,240 460,300 380,240" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+    <text x="460" y="234" text-anchor="middle" font-size="13" font-weight="600" fill="#78350f">conditional</text>
+    <text x="460" y="252" text-anchor="middle" font-size="13" font-weight="600" fill="#78350f">fan-out</text>
+  </g>
+
+  <!-- 5 detector boxes -->
+  <!-- detect_filler -->
+  <g>
+    <rect x="600" y="60" width="200" height="56" rx="10" fill="#ecfccb" stroke="#65a30d" stroke-width="1.5"/>
+    <text x="700" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#365314">detect_filler</text>
+    <text x="700" y="102" text-anchor="middle" font-size="11" fill="#3f6212">전체 카테고리</text>
+  </g>
+  <line x1="540" y1="220" x2="600" y2="100" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- detect_cps -->
+  <g>
+    <rect x="600" y="135" width="200" height="56" rx="10" fill="#ecfccb" stroke="#65a30d" stroke-width="1.5"/>
+    <text x="700" y="159" text-anchor="middle" font-size="13" font-weight="600" fill="#365314">detect_cps</text>
+    <text x="700" y="177" text-anchor="middle" font-size="11" fill="#3f6212">전체 카테고리</text>
+  </g>
+  <line x1="540" y1="230" x2="600" y2="170" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- detect_dead_zone -->
+  <g>
+    <rect x="600" y="210" width="200" height="56" rx="10" fill="#ecfccb" stroke="#65a30d" stroke-width="1.5"/>
+    <text x="700" y="234" text-anchor="middle" font-size="13" font-weight="600" fill="#365314">detect_dead_zone</text>
+    <text x="700" y="252" text-anchor="middle" font-size="11" fill="#3f6212">전체 카테고리</text>
+  </g>
+  <line x1="540" y1="240" x2="600" y2="238" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- detect_gaze -->
+  <g>
+    <rect x="600" y="285" width="200" height="56" rx="10" fill="#ecfccb" stroke="#65a30d" stroke-width="1.5"/>
+    <text x="700" y="309" text-anchor="middle" font-size="13" font-weight="600" fill="#365314">detect_gaze</text>
+    <text x="700" y="327" text-anchor="middle" font-size="11" fill="#3f6212">강의만 활성</text>
+  </g>
+  <line x1="540" y1="250" x2="600" y2="313" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- detect_content_gap -->
+  <g>
+    <rect x="600" y="360" width="200" height="56" rx="10" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <text x="700" y="384" text-anchor="middle" font-size="13" font-weight="600" fill="#831843">detect_content_gap</text>
+    <text x="700" y="402" text-anchor="middle" font-size="11" fill="#9d174d">강의 · 기타 (GPT-4o Vision)</text>
+  </g>
+  <line x1="540" y1="260" x2="600" y2="388" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- generate_suggestions -->
+  <g>
+    <rect x="900" y="208" width="200" height="64" rx="10" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <text x="1000" y="234" text-anchor="middle" font-size="14" font-weight="600" fill="#831843">generate_suggestions</text>
+    <text x="1000" y="254" text-anchor="middle" font-size="11" fill="#9d174d">GPT-4o-mini · 한국어 제안</text>
+  </g>
+  <line x1="800" y1="88" x2="900" y2="220" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="163" x2="900" y2="230" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="238" x2="900" y2="240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="313" x2="900" y2="252" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="388" x2="900" y2="262" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <line x1="1104" y1="240" x2="1148" y2="240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- END -->
+  <g>
+    <circle cx="1180" cy="240" r="32" fill="#e7e5e4" stroke="#57534e" stroke-width="1.5"/>
+    <text x="1180" y="246" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1917">END</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(32, 420)">
+    <rect width="12" height="12" fill="#ecfccb" stroke="#65a30d"/>
+    <text x="20" y="11" font-size="11" fill="#365314">로컬 detector</text>
+    <rect x="120" width="12" height="12" fill="#fce7f3" stroke="#db2777"/>
+    <text x="140" y="11" font-size="11" fill="#831843">LLM 호출 노드</text>
+    <rect x="240" width="12" height="12" fill="#fef3c7" stroke="#d97706"/>
+    <text x="260" y="11" font-size="11" fill="#78350f">conditional edge</text>
+    <text x="32" y="36" font-size="11" fill="#64748b" font-style="italic">
+      lecture는 5차원 전체, vlog는 filler·cps·dead_zone 3차원, other는 gaze만 비활성으로 그래프 자체가 다르게 구성된다.
+    </text>
+  </g>
+</svg>

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 420" font-family="sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="420" fill="#fafaf9"/>
+  <text x="32" y="40" font-size="20" font-weight="600" fill="#1c1917">Vidoctor — 전체 아키텍처</text>
+
+  <!-- 1. Upload -->
+  <g>
+    <rect x="32" y="170" width="180" height="80" rx="10" fill="#f5f5f4" stroke="#78716c" stroke-width="1.5"/>
+    <text x="122" y="200" text-anchor="middle" font-size="14" font-weight="600" fill="#1c1917">영상 업로드</text>
+    <text x="122" y="222" text-anchor="middle" font-size="12" fill="#57534e">파일 또는</text>
+    <text x="122" y="238" text-anchor="middle" font-size="12" fill="#57534e">YouTube URL</text>
+  </g>
+
+  <!-- arrow 1 -->
+  <line x1="216" y1="210" x2="262" y2="210" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 2. FastAPI SSE -->
+  <g>
+    <rect x="266" y="170" width="190" height="80" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="361" y="200" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">FastAPI</text>
+    <text x="361" y="222" text-anchor="middle" font-size="12" fill="#1e40af">POST /api/analyze</text>
+    <text x="361" y="238" text-anchor="middle" font-size="12" fill="#1e40af">(SSE 진행 스트림)</text>
+  </g>
+
+  <!-- branch up: classifier -->
+  <g>
+    <rect x="500" y="60" width="200" height="80" rx="10" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <text x="600" y="90" text-anchor="middle" font-size="14" font-weight="600" fill="#831843">GPT-4o-mini</text>
+    <text x="600" y="112" text-anchor="middle" font-size="12" fill="#9d174d">카테고리 자동 분류</text>
+    <text x="600" y="128" text-anchor="middle" font-size="12" fill="#9d174d">(auto 선택 시)</text>
+  </g>
+  <line x1="410" y1="170" x2="540" y2="140" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- branch down: R2 -->
+  <g>
+    <rect x="500" y="280" width="200" height="80" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+    <text x="600" y="310" text-anchor="middle" font-size="14" font-weight="600" fill="#78350f">Cloudflare R2</text>
+    <text x="600" y="332" text-anchor="middle" font-size="12" fill="#92400e">영상 저장 (S3 호환)</text>
+    <text x="600" y="348" text-anchor="middle" font-size="12" fill="#92400e">signed URL 발급</text>
+  </g>
+  <line x1="410" y1="250" x2="540" y2="290" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- merge back -->
+  <line x1="700" y1="100" x2="760" y2="195" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="700" y1="320" x2="760" y2="225" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 3. LangGraph -->
+  <g>
+    <rect x="760" y="170" width="200" height="80" rx="10" fill="#fce7f3" stroke="#db2777" stroke-width="1.5"/>
+    <text x="860" y="200" text-anchor="middle" font-size="14" font-weight="600" fill="#831843">LangGraph 파이프라인</text>
+    <text x="860" y="222" text-anchor="middle" font-size="12" fill="#9d174d">5차원 동적 fan-out</text>
+    <text x="860" y="238" text-anchor="middle" font-size="12" fill="#9d174d">→ 개선 제안 생성</text>
+  </g>
+
+  <!-- arrow to DB -->
+  <line x1="964" y1="210" x2="1010" y2="210" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 4. DB + R2 (results) -->
+  <g>
+    <rect x="1014" y="170" width="140" height="80" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+    <text x="1084" y="200" text-anchor="middle" font-size="14" font-weight="600" fill="#78350f">Supabase</text>
+    <text x="1084" y="222" text-anchor="middle" font-size="12" fill="#92400e">findings +</text>
+    <text x="1084" y="238" text-anchor="middle" font-size="12" fill="#92400e">suggestions</text>
+  </g>
+
+  <!-- SSE dotted line down to client -->
+  <path d="M 360 250 Q 360 380 720 380" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-dash)"/>
+  <text x="540" y="402" text-anchor="middle" font-size="11" fill="#64748b" font-style="italic">SSE 진행 이벤트 (실시간 노드 완료 통지)</text>
+
+  <!-- Client -->
+  <g>
+    <rect x="724" y="356" width="200" height="56" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="824" y="380" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Next.js 클라이언트</text>
+    <text x="824" y="398" text-anchor="middle" font-size="12" fill="#1e40af">진행 그래프 + 결과 화면</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(32, 360)">
+    <rect width="12" height="12" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="20" y="11" font-size="11" fill="#1e3a8a">API · Web</text>
+    <rect y="20" width="12" height="12" fill="#fef3c7" stroke="#d97706"/>
+    <text x="20" y="31" font-size="11" fill="#78350f">Storage · DB</text>
+    <rect y="40" width="12" height="12" fill="#fce7f3" stroke="#db2777"/>
+    <text x="20" y="51" font-size="11" fill="#831843">LLM · Pipeline</text>
+  </g>
+</svg>
