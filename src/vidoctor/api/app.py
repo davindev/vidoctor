@@ -1,14 +1,6 @@
-"""FastAPI app — Next.js 프론트엔드와 통신하는 HTTP 엔드포인트.
+"""FastAPI app — Next.js 프론트엔드용 HTTP 엔드포인트.
 
-엔드포인트:
-- GET  /api/analyses                    — 이전 분석 리스트
-- GET  /api/analyses/{id}              — 단건 (meta + findings + suggestions)
-- GET  /api/analyses/{id}/video-url    — R2 signed URL
-- DELETE /api/analyses/{id}            — 영상 + 모든 분석·findings·suggestions 삭제
-- POST /api/analyze                    — multipart 업로드 → SSE 스트림으로 진행 이벤트
-                                          (`started`/`uploaded`/`node`/`complete`/`error`)
-
-CORS는 dev 단계에서 Next.js dev server(localhost:3000)를 허용.
+분석 CRUD + SSE 진행 스트림. 엔드포인트 상세는 /docs (OpenAPI) 참고.
 """
 
 from __future__ import annotations
@@ -61,7 +53,8 @@ _log = logging.getLogger(__name__)
 _ANALYSIS_TIMEOUT_SEC = 15 * 60
 
 # 동시 진행 분석 cap. WhisperX·MediaPipe 모델 각 ~1-2GB RAM이라 무제한 동시는 OOM 위험.
-# 시연 환경 단일 인스턴스 기준 2개로 시작 — 큐가 차면 새 요청은 503 즉시 거절(SSE 안 열고).
+# 시연 환경 단일 인스턴스 기준 2개. 한도 초과 시 SSE 채널을 연 뒤 첫 이벤트로 error를 보낸다
+# (클라이언트가 EventSource 한 가지 핸들러로만 처리하도록 응답 코드 분기를 피함).
 _MAX_CONCURRENT_ANALYSES = 2
 _analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
 
@@ -88,7 +81,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Schemas — 프론트엔드 클라이언트가 직접 import하는 타입 단일 진실
+# Schemas
 # ---------------------------------------------------------------------------
 
 
@@ -162,6 +155,7 @@ class VideoUrlResponse(BaseModel):
 
 @app.get("/api/analyses", response_model=list[AnalysisListItem])
 async def list_recent_analyses(limit: int = 20) -> list[AnalysisListItem]:
+    """최근 분석 리스트를 반환한다."""
     rows = await asyncio.to_thread(list_analyses, limit)
     items: list[AnalysisListItem] = []
     for r in rows:
@@ -182,11 +176,18 @@ async def list_recent_analyses(limit: int = 20) -> list[AnalysisListItem]:
 
 @app.get("/api/analyses/{analysis_id}", response_model=AnalysisDetail)
 async def get_analysis(analysis_id: str) -> AnalysisDetail:
-    meta = await asyncio.to_thread(get_analysis_meta, analysis_id)
+    """분석 단건 상세(meta + findings + suggestions)를 반환한다."""
+    # 4개 쿼리가 모두 analysis_id만 받고 서로 의존 없음 → gather로 병렬 fetch.
+    # 순차였을 때 0.4~1.2s, 병렬은 최장 호출 시간 1개로 수렴.
+    meta, findings_raw, suggestions_raw, video_meta = await asyncio.gather(
+        asyncio.to_thread(get_analysis_meta, analysis_id),
+        asyncio.to_thread(get_analysis_findings, analysis_id),
+        asyncio.to_thread(get_analysis_suggestions, analysis_id),
+        asyncio.to_thread(get_analysis_video_meta, analysis_id),
+    )
     if not meta:
-        raise HTTPException(status_code=404, detail="analysis not found")
+        raise HTTPException(status_code=404, detail="분석을 찾을 수 없습니다.")
 
-    findings_raw = await asyncio.to_thread(get_analysis_findings, analysis_id)
     findings: dict[str, list[FindingItem]] = {dim: [] for dim in DIM_TO_STATE_FIELD}
     for dim, events in findings_raw.items():
         for ev in events:
@@ -201,7 +202,6 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
                 )
             )
 
-    suggestions_raw = await asyncio.to_thread(get_analysis_suggestions, analysis_id)
     suggestions = [
         SuggestionItem(text=s.text, finding_refs=s.finding_refs) for s in suggestions_raw
     ]
@@ -210,8 +210,6 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
     step_metrics = [StepMetric(**sm) for sm in metadata.get("step_metrics", [])]
     diar_raw = metadata.get("speaker_diarization")
     diar = SpeakerDiarization(**diar_raw) if diar_raw else None
-
-    video_meta = await asyncio.to_thread(get_analysis_video_meta, analysis_id)
 
     return AnalysisDetail(
         id=analysis_id,
@@ -230,6 +228,7 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
 
 @app.get("/api/analyses/{analysis_id}/video-url", response_model=VideoUrlResponse)
 async def get_video_url(analysis_id: str) -> VideoUrlResponse:
+    """영상 R2 객체의 signed URL(2시간)을 발급한다."""
     storage_path = await asyncio.to_thread(get_analysis_storage_path, analysis_id)
     if storage_path is None:
         return VideoUrlResponse(url=None)
@@ -239,6 +238,7 @@ async def get_video_url(analysis_id: str) -> VideoUrlResponse:
 
 @app.delete("/api/analyses/{analysis_id}")
 async def delete_analysis(analysis_id: str) -> dict[str, str]:
+    """영상 + 모든 관련 분석·findings·suggestions를 삭제한다."""
     try:
         await asyncio.to_thread(delete_video_for_analysis, analysis_id)
     except LookupError as e:
@@ -247,12 +247,11 @@ async def delete_analysis(analysis_id: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/analyze — multipart 업로드 + SSE 진행 스트림
+# POST /api/analyze
 # ---------------------------------------------------------------------------
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
-    """Server-Sent Events 단일 이벤트 라인 — `event:` + `data:` + 빈 줄."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -279,8 +278,7 @@ async def _analyze_stream(
     `_analysis_slot` 세마포어로 동시 분석 수를 제한 — 모델 메모리(~1-2GB × N)가 OOM
     유발하지 않도록. 큐가 꽉 차면 즉시 사용자에게 안내 메시지를 보내고 종료.
     """
-    # asyncio.timeout(0)로 즉시 try-acquire — 세마포어 race 없이 cap 결정. _value 같은
-    # private 속성 접근 회피.
+    # 슬롯이 모두 차 있으면 즉시 TimeoutError → SSE error 이벤트로 안내.
     try:
         async with asyncio.timeout(0):
             await _analysis_slot.acquire()
@@ -310,7 +308,7 @@ async def _analyze_stream(
                 await asyncio.to_thread(fail_analysis, analysis_id, video_id, reason)
 
     try:
-        # 1) 소스 → 로컬 tmp 파일. URL 경로는 다운로드 단계 표시를 위한 별도 SSE phase.
+        # 1) 소스 → 로컬 tmp.
         if url is not None:
             yield _sse("status", {"phase": "downloading"})
             try:
@@ -343,32 +341,28 @@ async def _analyze_stream(
             yield _sse("status", {"phase": "uploading"})
             storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
 
-        # videos·analyses row 만들고 client에 analysis_id 통지 — 이후 graph가 끝나기 전에
-        # client가 새로고침해도 in-progress row를 폴링할 수 있게.
+        # videos·analyses row 생성 후 analysis_id 통지 (graph 진행 중에도 client가 폴링 가능).
         video_id = await asyncio.to_thread(insert_video, storage_path, category, None)
         analysis_id = await asyncio.to_thread(insert_analysis, video_id)
         # 이 분석의 모든 로그에 analysis_id 자동 부착. Token은 finally에서 reset.
         analysis_id_token = analysis_id_var.set(analysis_id)
         _log.info(
-            "analysis started",
+            "분석 시작",
             extra={"category": category, "filename": filename, "source": "url" if url else "file"},
         )
         yield _sse("started", {"analysis_id": analysis_id})
         yield _sse("uploaded", {})
 
-        # graph 노드 완료 이벤트를 SSE로 relay. `on_node_complete`는 sync callback이라
-        # asyncio.Queue로 producer/consumer 분리. graph 종료 시 sentinel(None)을 큐에
-        # 넣어 main loop이 깔끔하게 빠져나오게 함 — graph_task와 queue.get()을 동시
-        # await하던 이전 패턴은 race·cancel-leak 위험.
-        _sentinel = object()
+        # graph의 sync callback을 메인 loop으로 안전하게 옮기는 큐.
+        # graph 종료 시 sentinel을 넣어 while-loop이 깔끔히 종료.
+        sentinel = object()
         loop = asyncio.get_running_loop()
         node_queue: asyncio.Queue[Any] = asyncio.Queue()
 
         def _on_node(name: str) -> None:
-            # LangGraph가 to_thread로 떨군 sync 노드에서 콜백할 수 있어 로깅을 thread-safe로
-            # main loop에 schedule — analysis_id contextvar가 main task에 묶여 있기 때문.
+            # sync 노드에서 콜백되므로 main loop으로 thread-safe하게 schedule (contextvar 전파).
             loop.call_soon_threadsafe(
-                lambda: _log.info("graph node done", extra={"node": name})
+                lambda: _log.info("graph 노드 완료", extra={"node": name})
             )
             loop.call_soon_threadsafe(
                 node_queue.put_nowait, ("node", {"name": name})
@@ -380,39 +374,36 @@ async def _analyze_stream(
                     str(tmp_path), category, on_node_complete=_on_node
                 )
             finally:
-                node_queue.put_nowait(_sentinel)
+                node_queue.put_nowait(sentinel)
 
         graph_task = asyncio.create_task(_drive_graph())
 
         try:
-            # 전체 분석 hard cap — 10분 영상 + WhisperX/MediaPipe/GPT-4o-Vision 합쳐도
-            # 보통 ~5분. 15분이면 hang 케이스만 끊고 정상은 통과.
+            # 전체 분석 hard cap (상단 _ANALYSIS_TIMEOUT_SEC 정의 참고).
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
                 while True:
                     item = await node_queue.get()
-                    if item is _sentinel:
+                    if item is sentinel:
                         break
                     event_name, payload = item
-                    yield _sse(event_name, payload or {})
+                    yield _sse(event_name, payload)
                 graph_state = await graph_task
         finally:
-            # timeout/cancel 등 비정상 종료 경로에서 graph_task가 detached로 남지 않게.
-            # 정상 종료엔 done이라 no-op. cancel 후 5초 안에 안 끝나면 thread cleanup
-            # 포기 (sync 모델 호출 안에 갇히면 어차피 cooperative cancel 불가).
+            # 비정상 종료 시 graph_task 누수 방지. cancel 후 5초 대기, 그 이상은 포기
+            # (sync 모델 호출은 cooperative cancel 불가).
             if not graph_task.done():
                 graph_task.cancel()
                 with suppress(Exception, asyncio.CancelledError, TimeoutError):
                     await asyncio.wait_for(graph_task, 5.0)
 
-        # 분류기 LLM 비용도 영상당 총 비용에 합산되도록 step_metrics에 push.
-        # graph 노드들의 `Annotated[..., add]` reducer와 동일 의미를 graph 외부에서 흉내.
+        # 분류기는 graph 바깥에서 실행되므로 메트릭을 수동으로 합산.
         if classify_metrics is not None:
             existing = graph_state.get("step_metrics") or []
             graph_state["step_metrics"] = [*existing, classify_metrics]
 
         await complete_analysis(analysis_id, video_id, graph_state)
         total_cost = sum(m.cost_usd for m in (graph_state.get("step_metrics") or []))
-        _log.info("analysis completed", extra={"total_cost_usd": round(total_cost, 6)})
+        _log.info("분석 완료", extra={"total_cost_usd": round(total_cost, 6)})
         yield _sse("complete", {"analysis_id": analysis_id})
 
     except (asyncio.CancelledError, GeneratorExit):
@@ -420,7 +411,7 @@ async def _analyze_stream(
         await _safe_fail("client disconnected")
         raise
     except TimeoutError:
-        _log.warning("analysis pipeline timeout")
+        _log.warning("분석 파이프라인 타임아웃")
         await _safe_fail("analysis timeout")
         yield _sse(
             "error",
@@ -433,7 +424,7 @@ async def _analyze_stream(
             },
         )
     except Exception as e:  # noqa: BLE001
-        _log.exception("analysis pipeline failed")
+        _log.exception("분석 파이프라인 실패")
         await _safe_fail(str(e))
         # 내부 예외 메시지 그대로 노출하면 Supabase/OpenAI raw error가 새어나감.
         # SafeError처럼 의도적으로 user-facing인 예외만 메시지 그대로, 나머지는 일반화.
@@ -453,19 +444,26 @@ async def analyze(
     file: UploadFile | None = File(default=None),
     url: str | None = Form(default=None),
 ) -> StreamingResponse:
+    """영상 업로드 또는 YouTube URL을 받아 분석을 시작한다 (SSE 진행 스트림)."""
     # "auto"는 분류기 위임. 그 외에는 CATEGORY_DIMENSIONS 멤버여야 graph 분기가 안전.
     if category != "auto" and category not in CATEGORY_DIMENSIONS:
-        raise HTTPException(status_code=400, detail=f"unknown category: {category}")
-    # 파일 XOR URL — 둘 다 들어오거나 둘 다 비면 400.
+        raise HTTPException(status_code=400, detail=f"알 수 없는 카테고리: {category}")
     has_file = file is not None and (file.filename or "") != ""
     has_url = url is not None and url.strip() != ""
-    if has_file == has_url:  # 둘 다 True 또는 둘 다 False
+    if has_file and has_url:
         raise HTTPException(
-            status_code=400, detail="file 또는 url 중 정확히 하나를 제공해야 합니다."
+            status_code=400, detail="file과 url은 동시에 보낼 수 없습니다."
         )
-    cat: Category | Literal["auto"] = (
-        "auto" if category == "auto" else cast(Category, category)
-    )
+    if not has_file and not has_url:
+        raise HTTPException(
+            status_code=400, detail="file 또는 url을 제공해야 합니다."
+        )
+
+    cat: Category | Literal["auto"]
+    if category == "auto":
+        cat = "auto"
+    else:
+        cat = cast(Category, category)
     return StreamingResponse(
         _analyze_stream(
             upload=file if has_file else None,
