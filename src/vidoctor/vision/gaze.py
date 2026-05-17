@@ -1,23 +1,11 @@
-"""강의 영상 시선 이탈 검출.
+"""강의 영상 시선 이탈 검출 — MediaPipe FaceLandmarker + cv2.solvePnP head pose.
 
-MediaPipe Tasks FaceLandmarker로 얼굴 landmark 추출 후 cv2.solvePnP로 head pose
-(yaw/pitch) 추정. 영상 전체 yaw/pitch median을 정면 응시 baseline으로 보고 차감한
-deviation에 임계를 적용해 시선 이탈 frame을 시간축으로 묶어 GazeEvent로 발행.
+영상 전체 yaw/pitch median을 정면 baseline으로 차감 후 deviation 임계 적용.
+무캘리 cv2.solvePnP + decomposeProjectionMatrix는 카메라·focal·euler 분해 컨벤션에 따라
+영상별 systematic offset(±수~십도)을 만들어 절대 임계로는 영상마다 분리 성능이 흔들림 —
+강사가 대부분 정면 응시한다는 강의 도메인 가정 위에서 median이 robust baseline.
 
-baseline 차감 근거: 무캘리 환경에서 cv2.solvePnP + decomposeProjectionMatrix는
-카메라 위치·focal 가정·euler 분해 컨벤션에 따라 영상별 systematic offset(±수~십도)을
-만든다. 강의 영상은 강사가 시간 대부분 정면 응시한다는 도메인 가정이 강해 영상 통계
-median을 정면 추정값으로 안전하게 사용 가능. 절대 임계는 baseline 0° 가정에 의존해
-영상마다 분리 성능이 흔들린다.
-
-iris landmark는 정밀 gaze에 더 적합하지만 카메라/얼굴 거리·시야각 calibration이
-없는 무캘리 환경에선 오차가 누적돼 실용성 낮음. MVP는 head pose 기반 6점 PnP로
-시작하고, calibration이 추가되는 v1.1에서 iris 보강 예정.
-
-mediapipe ≥0.10에서 legacy `solutions` API가 정리되고 Tasks API로 통일됐기 때문에
-FaceLandmarker.task 모델 파일을 첫 호출 시 자동 다운로드(`models/`)해 사용한다.
-
-강의 카테고리에서만 실행 (브이로그·기타는 카메라 응시가 필수가 아님).
+FaceLandmarker.task 모델은 첫 호출 시 자동 다운로드(`models/`). graph가 lecture에서만 호출.
 """
 
 from __future__ import annotations
@@ -339,8 +327,7 @@ def _ensure_model(url: str, path: Path, expected_sha256: str) -> Path:
 def _get_face_detector():  # noqa: ANN202
     """BlazeFace 인스턴스를 프로세스 수명 동안 1회 생성·캐시.
 
-    transcribe.py의 WhisperX 캐시와 동일 패턴. detect_gaze 호출마다 모델 로드·delegate
-    초기화 비용을 회피. IMAGE 모드라 호출 간 timestamp 의존 없어 캐시 안전.
+    IMAGE 모드라 호출 간 timestamp 의존 없어 캐시 안전.
     (FaceLandmarker는 VIDEO 모드 timestamp 단조 증가 요건이 있어 호출별 새 인스턴스 유지.)
     """
     from mediapipe.tasks import python as mp_tasks
@@ -457,8 +444,8 @@ def _detect_webcam_roi(video_path: str) -> _ROI | None:
 
 def sample_video_pose(video_path: str) -> list[PoseSample]:
     """영상 → 5fps 프레임 단위 head pose 측정 리스트. ROI 추정 실패 시 빈 list."""
-    # 1단계: 웹캠 ROI 자동 추정. 4코너 폴백까지 실패하면 FaceLandmarker는 BlazeFace보다
-    # 큰 얼굴을 요구하므로 의미 있는 결과를 못 낸다 → 즉시 빈 list로 빠른 종료.
+    # BlazeFace로 ROI 자동 추정 — 4코너 폴백까지 실패면 FaceLandmarker는 BlazeFace보다
+    # 큰 얼굴을 요구하므로 의미 있는 결과를 못 냄 → 즉시 빈 list로 빠른 종료.
     roi = _detect_webcam_roi(video_path)
     if roi is None:
         return []
@@ -531,11 +518,8 @@ def subtract_baseline(
     """영상 전체 yaw/pitch median을 정면 baseline으로 차감해 (samples, by, bp) 반환.
 
     median은 outlier에 robust해 짧은 시선 이탈이 baseline 추정을 오염시키지 않는다.
-    영상이 매우 짧거나 강사가 영상 내내 시선 이탈 중인 비정상 케이스는 baseline 가정이
-    깨지지만, 강의 도메인에서 가정상 무시.
-
-    baseline 값을 함께 반환해 호출자(평가 스크립트 로깅 등)가 같은 median을 다시 계산할
-    필요 없게 한다.
+    강사가 영상 내내 시선 이탈 중인 비정상 케이스는 강의 도메인 가정상 무시.
+    baseline 값도 반환 — 호출자가 median 재계산 안 하도록.
     """
     if not samples:
         return [], 0.0, 0.0

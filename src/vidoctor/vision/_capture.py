@@ -1,11 +1,8 @@
 """vision 모듈 공용 cv2.VideoCapture 라이프사이클 + 프레임 인코딩.
 
-`content_gap`·`dead_zone`·`gaze`·`category_classifier` 4곳이 같은 패턴을 복사하던 것을
-한 곳에 모은다.
-
 - `open_capture`: `cv2.VideoCapture` 컨텍스트 매니저 — open 실패 시 명확한 에러 + 항상 release.
-- `encode_frame_jpeg`: BGR ndarray → 다운스케일 → JPEG → base64. content_gap(720p/q80)과
-  category_classifier(480p/q75)가 max_height/quality만 다르고 알고리즘 동일했다.
+- `encode_frame_jpeg`: BGR ndarray → 다운스케일 → JPEG → base64. max_height/quality만
+  호출부별로 다르고 알고리즘 동일.
 """
 
 from __future__ import annotations

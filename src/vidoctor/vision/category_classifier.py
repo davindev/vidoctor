@@ -2,7 +2,7 @@
 
 분석 파이프라인 분기(`graph/pipeline.py` `CATEGORY_DIMENSIONS`)는 lecture / vlog / other
 중 어떤 차원을 활성화할지 결정하므로 분석 시작 *직전*에 카테고리가 확정돼 있어야 한다.
-이 모듈은 영상의 분위 시점 프레임 3장을 gpt-4o-mini Vision에 보내 카테고리를 결정한다.
+이 모듈은 영상 시작/중간/후반 3시점 프레임을 gpt-4o-mini Vision에 보내 카테고리를 결정한다.
 
 비용·시간 추정: 480p 3장 + gpt-4o-mini ≈ $0.0005, ~1-2초. 전체 파이프라인(수십 초)
 대비 무시할 수준.

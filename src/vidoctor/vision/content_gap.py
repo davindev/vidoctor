@@ -1,16 +1,9 @@
-"""내용 공백 검출 — GPT-4o Vision multi-image batch + 카테고리 rubric.
+"""내용 공백 검출 — GPT-4o Vision multi-image + 카테고리 rubric.
 
-브이로그는 비활성 (일상 기록·감정 공유 영상에 "설명 충분성" 평가 부적합).
-강의는 "슬라이드 vs 발화 미스매치", 기타는 "자체 의미 전달 가능성" rubric.
-
-알고리즘:
-1. 영상에서 SAMPLE_INTERVAL_SEC(30s) 균등 + PySceneDetect 컷 경계 결합 프레임 시각 추출
-2. dedup (인접 시각 5s 이내는 하나만) + MAX_SAMPLES 캡으로 비용 통제
-3. 각 프레임을 720p 다운스케일 + JPEG 인코딩 + base64
-4. 각 프레임 시각 ± WINDOW_SEC(15s) transcript 추출, 윈도우 외부에 단어 있으면 양 끝
-   "…" 마커 부착 → rubric에서 "…는 끊김 아님" 안내. ASR 분할이 만드는 가짜 누락 신호 차단.
-5. 프레임·transcript·rubric을 한 multi-image 메시지로 묶어 GPT-4o Vision 호출
-6. Pydantic structured output(_ContentGapResponse)으로 파싱 → ContentGapEvent
+vlog 비활성 (일상·감정 공유 영상에 "설명 충분성" 평가 부적합). lecture는 "슬라이드 vs
+발화 미스매치", other는 "자체 의미 전달 가능성" rubric. LLM 응답 [start, end]는
+mismatch_keyword를 ASR transcript에서 찾아 발화 시점으로 좁힘 — 의미는 LLM, 시간
+anchor는 ASR이 책임.
 """
 
 from __future__ import annotations

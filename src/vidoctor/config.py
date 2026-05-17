@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str | None = None
 
     # WhisperX 모델 swap용 dev 옵션. None이면 audio/transcribe.py의 DEFAULT_MODEL_NAME.
-    # 기존 VIDOCTOR_WHISPER_MODEL env var 이름 유지 (validation_alias).
     whisper_model: str | None = Field(default=None, validation_alias="VIDOCTOR_WHISPER_MODEL")
 
 

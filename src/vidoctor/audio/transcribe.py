@@ -1,11 +1,7 @@
 """WhisperX 기반 한국어 ASR + wav2vec2 forced alignment.
 
 ASR 모델로 텍스트 추출 후 wav2vec2로 단어 단위 ±20ms 정렬. 모델은 첫 호출 시 lazy
-load되어 프로세스 수명 동안 캐시.
-
-`VIDOCTOR_WHISPER_MODEL` 환경변수로 모델 path 또는 HF id 지정 가능. 기본은 OpenAI
-영어 우세 large-v3-turbo이고, 한국어 fine-tuned 모델(예: ct2 변환된 KsponSpeech 학습)
-경로를 지정하면 그쪽으로 swap.
+load되어 프로세스 수명 동안 캐시. settings.whisper_model로 모델 swap (기본 large-v3-turbo).
 """
 
 from __future__ import annotations

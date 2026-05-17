@@ -1,14 +1,11 @@
-"""Supabase(DB) + Cloudflare R2(영상 storage) repository: videos / analyses / findings CRUD.
+"""Supabase DB + Cloudflare R2 영상 storage — videos / analyses / findings CRUD.
 
-graph 결과를 영구 저장해 UI에서 '이전 분석 다시 보기' 가능. service_role key로
-단일 사용자 가정 (RLS 비활성, v1.1에서 인증 도입 시 정책 추가).
+영상 파일은 R2(S3 호환, egress 무료)에, 메타·findings·suggestions는 Supabase Postgres.
+service_role key로 단일 사용자 가정 (RLS 비활성).
 
-영상 파일은 R2(S3 호환, single-file 5TB·egress 무료)에, 메타·findings·suggestions는
-Supabase Postgres에 저장한다.
-
-5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 갖지만 findings
-테이블은 (start_sec/end_sec/payload JSONB) 통합 스키마. 차원별 고유 필드는 payload
-JSONB로 직렬화·역직렬화한다.
+5차원 이벤트는 차원별 다른 필드(text/cps/direction/description...)를 가지지만 findings
+테이블은 (start_sec/end_sec/payload JSONB) 통합 스키마 — 차원별 고유 필드는 payload
+JSONB로 직렬화·역직렬화.
 """
 
 from __future__ import annotations

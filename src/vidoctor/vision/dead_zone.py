@@ -1,19 +1,9 @@
-"""시각 dead zone 검출.
+"""시각 dead zone 검출 — Silero VAD 무발화 + Optical flow per-frame max gate.
 
-화면 변화·발화 모두 정지된 구간 검출.
-
-1. **Silero VAD**로 무발화 구간 추출. 환경 소음(차·바람·음악)은 비음성으로 자동 무시.
-   배경의 다른 사람 목소리는 발화로 잡힘 — 화자 분리는 별도 차원.
-2. 무발화 구간 중 카테고리별 `MIN_DURATION_SEC` 이상을 dead zone 후보.
-3. **Optical flow magnitude의 per-frame max** 시계열로 후보 안 화면 움직임 측정. 평균은
-   화면 작은 영역(예: lecture 우하단 페이스캠) 움직임이 큰 정적 영역(슬라이드)에 묻혀
-   사용자 인지 "화면 움직임"을 못 잡음. per-frame max는 한 픽셀이라도 크게 움직이면
-   잡혀 작은 영역 움직임에 robust.
-4. 후보 안 per-frame max 시계열의 median이 카테고리별 임계 이하일 때 시각 정적으로 인정.
-
-카테고리별 임계가 갈리는 이유: lecture는 삼각대 고정이라 정적 floor가 0에 가깝고,
-vlog는 핸드헬드라 정적이어도 카메라 미세 흔들림으로 floor가 2~3 깔림. 단일 절대 임계로
-양쪽 baseline 위 신호 분리 불가능.
+Silero VAD 무발화 구간 중 카테고리별 min_duration 이상 + flow median이 임계 이하인
+구간만 채택. per-frame max 사용 근거: 평균은 큰 정적 영역(슬라이드)에 작은 영역(페이스캠)
+움직임이 묻혀 사용자 인지 "화면 움직임"을 못 잡음. 카테고리별 임계는 lecture 삼각대 floor
+0 근처 vs vlog 핸드헬드 baseline 2~3 — 단일 절대 임계로는 분리 불가능.
 """
 
 from __future__ import annotations
