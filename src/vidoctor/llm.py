@@ -1,9 +1,8 @@
 """OpenAI LLM 래퍼 + Langfuse trace 통합 + 호출 비용·latency 측정 헬퍼.
 
 - LangChain ChatOpenAI에 Langfuse callback을 부착해 모든 호출이 자동 trace.
-- detect_content_gap (GPT-4o Vision), generate_suggestions (GPT-4o-mini)에서 공통 사용.
-- Langfuse v4부터 글로벌 클라이언트 초기화 후 CallbackHandler가 그 상태를 공유하는 구조.
-- LLMCallMetrics·estimate_cost_usd로 production·평가 양쪽이 동일 단가표 공유.
+- detect_content_gap (GPT-4o Vision), generate_suggestions (GPT-4o-mini)에서 공용.
+- LLMCallMetrics·estimate_cost_usd로 production·평가가 동일 단가표 공유.
 """
 
 from __future__ import annotations
@@ -21,8 +20,7 @@ from pydantic import BaseModel
 
 from vidoctor.config import get_settings
 
-# 모델별 1M 토큰당 USD 단가 (input, output). OpenAI 공식가. 캐시·discount 미반영.
-# 정확 청구는 dashboard 확인. 새 모델 추가 시 여기 한 줄.
+# 모델별 1M 토큰당 USD (input, output). OpenAI 공식가, 캐시·할인 미반영.
 _PRICE_USD_PER_1M: dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
@@ -82,26 +80,24 @@ async def invoke_structured_with_metrics(
 ) -> tuple[_R, LLMCallMetrics]:
     """structured output ainvoke + latency·token usage 측정 → (parsed, metrics).
 
-    `with_structured_output(include_raw=True)`로 raw + parsed 둘 다 받아 raw에서
-    token 메타를 추출하고, 호출 latency는 perf_counter로 측정. content_gap·suggestions
-    가 동일 흐름이라 한 곳에 캡슐화.
+    content_gap·suggestions가 동일 흐름이라 한 곳에 캡슐화.
     """
     structured = chat_model.with_structured_output(schema, include_raw=True)
     t0 = time.perf_counter()
-    result = cast(dict, await structured.ainvoke(messages))
+    result = cast(dict[str, Any], await structured.ainvoke(messages))
     latency = time.perf_counter() - t0
 
     raw = result["raw"]
     parsed = cast(_R, result["parsed"])
-    prompt_tok, completion_tok = extract_token_usage(raw)
+    prompt_tokens, completion_tokens = extract_token_usage(raw)
     model_name = cast(str, chat_model.model)
     metrics = LLMCallMetrics(
         step=step,
         model=model_name,
-        cost_usd=estimate_cost_usd(model_name, prompt_tok, completion_tok),
+        cost_usd=estimate_cost_usd(model_name, prompt_tokens, completion_tokens),
         latency_sec=latency,
-        prompt_tokens=prompt_tok,
-        completion_tokens=completion_tok,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
     return parsed, metrics
 
@@ -133,23 +129,20 @@ def get_chat_model(
 ) -> ChatOpenAI:
     """LangChain ChatOpenAI 인스턴스. Langfuse callback 자동 부착.
 
-    호출자는 표준 .invoke() / .ainvoke() / structured output 등 LangChain API 사용.
-    기본은 비용 가벼운 gpt-4o-mini. content_gap 분석은 model="gpt-4o" 명시 필요.
-
-    max_tokens는 structured output 길이 폭발(모델이 종료 신호 없이 list 항목을 무한
-    생성해 length limit에 닿는 케이스)을 차단할 때 명시.
+    기본은 비용 가벼운 gpt-4o-mini. content_gap만 model="gpt-4o" 명시 필요.
+    max_tokens는 structured output 길이 폭발 차단용 (모델이 list를 무한 생성).
     """
     settings = get_settings()
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_tokens=max_tokens,  # type: ignore[call-arg]
+        max_tokens=max_tokens,  # type: ignore[call-arg]  # ChatOpenAI stub이 None 불허
         # 429 burst를 SDK 지수 backoff로 흡수. 5회면 burst-heavy eval 안정 통과,
         # 영구 실패 시 빠른 fail-fast가 가능한 균형점.
         max_retries=5,
         # 개별 호출이 응답 안 오면 60초 후 끊어 한 분석이 무한 대기하지 않게.
         # GPT-4o Vision multi-image도 보통 ~5초 내 응답이라 충분 마진.
         timeout=60.0,
-        api_key=settings.openai_api_key,
+        api_key=settings.openai_api_key.get_secret_value(),
         callbacks=[_langfuse_handler()],
     )
