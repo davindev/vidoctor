@@ -1,22 +1,16 @@
 """JSON 라인 logger + analysis_id correlation 컨텍스트.
 
-`/api/analyze`가 한 분석 시작 시 `analysis_id_var.set(...)`로 컨텍스트를 주입하면,
-이후 같은 task 내에서 발생하는 모든 로그 레코드에 `analysis_id`가 자동 부착된다.
-운영 환경에서 `jq '.analysis_id == "..."'` 한 줄로 한 분석의 로그를 추출 가능.
-
-표준 logging Formatter에 contextvar를 직접 끌어오는 방법이 깔끔. 별도 라이브러리(structlog
-등) 도입은 prototype 범위 초과 — 필요 최소만 구현.
+`/api/analyze`가 분석 시작 시 `analysis_id_var.set(...)` 하면 같은 task 내 모든
+로그 레코드에 `analysis_id` 자동 부착 — `jq '.analysis_id == "..."'`로 한 분석
+로그 추출 가능.
 """
-
-from __future__ import annotations
 
 import json
 import logging
 import sys
 from contextvars import ContextVar
 
-# 한 분석의 ID. analyze 엔드포인트 진입 시 set, exception/완료 후 해제는 ContextVar의
-# task-local 격리로 자동.
+# 한 분석의 ID. analyze 엔드포인트가 set, task 종료 시 ContextVar가 자동 격리.
 analysis_id_var: ContextVar[str | None] = ContextVar("analysis_id", default=None)
 
 
@@ -62,8 +56,7 @@ def configure_logging(level: int = logging.INFO) -> None:
         root.removeHandler(h)
     root.addHandler(handler)
     root.setLevel(level)
-    # uvicorn logger는 자체 handler 갖지 말고 root로 흘려보내 단일 출력 — stdlib cookbook
-    # "library code attaches NullHandler; application code configures root" 패턴.
+    # uvicorn logger는 root로 통합 (자체 handler 없이 propagate).
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         lg = logging.getLogger(name)
         lg.handlers = []
