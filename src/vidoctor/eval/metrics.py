@@ -37,6 +37,8 @@ CPS_TOLERANCE_SEC = 1.0
 
 @dataclass
 class DimensionMetrics:
+    """차원별 TP/FP/FN 카운트 + IoU 합산. precision/recall/f1/temporal_iou_mean은 @property."""
+
     dimension: str
     tp: int = 0
     fp: int = 0
@@ -186,7 +188,7 @@ def compute_cps_metrics(
     )
 
 
-def _compute_iou_metrics(
+def compute_iou_metrics(
     dim: Dimension, dim_labels: list[Interval], events: list[Any]
 ) -> DimensionMetrics:
     """IoU greedy 매칭 + DimensionMetrics 패키징 — dead_zone/gaze/content_gap 공용."""

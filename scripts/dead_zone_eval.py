@@ -24,7 +24,7 @@ from vidoctor.eval._script_lib import (
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
-from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
+from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, compute_iou_metrics
 from vidoctor.graph.state import Category
 from vidoctor.vision.dead_zone import (
     CATEGORY_CONFIG,
@@ -172,7 +172,7 @@ def main() -> None:
     dead_zone_labels = filter_labels_by_dim(labels, _DIMENSION)
     dead_zone_intervals = [(lbl.start, lbl.end) for lbl in dead_zone_labels]
 
-    m = _compute_iou_metrics(_DIMENSION, dead_zone_intervals, events)
+    m = compute_iou_metrics(_DIMENSION, dead_zone_intervals, events)
     metrics = metrics_to_dict(m)
     _log.info(
         "dead_zone(%s): TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",

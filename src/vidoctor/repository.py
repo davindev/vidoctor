@@ -160,6 +160,7 @@ def insert_video(
     category: Category,
     duration_sec: float | None = None,
 ) -> str:
+    """videos row 생성 (status='analyzing') 후 id 반환."""
     res = (
         _client()
         .table("videos")
@@ -177,6 +178,7 @@ def insert_video(
 
 
 def update_video_status(video_id: str, status: str) -> None:
+    """videos.status를 갱신한다 (analyzing → completed/failed 전이)."""
     _client().table("videos").update({"status": status}).eq("id", video_id).execute()
 
 
@@ -186,6 +188,7 @@ def update_video_status(video_id: str, status: str) -> None:
 
 
 def insert_analysis(video_id: str) -> str:
+    """analyses row 생성 후 id 반환 (started_at은 DB default로 자동 채움)."""
     res = _client().table("analyses").insert({"video_id": video_id}).execute()
     return _first_row(res)["id"]
 
@@ -401,7 +404,7 @@ def create_video_signed_url(storage_path: str, expires_in: int = 3600) -> str:
     """R2 객체 키 → 만료 시간 있는 signed URL.
 
     버킷이 private이라 직접 URL은 401 — boto3 `generate_presigned_url`로 서명된 URL을
-    만들어 Streamlit `st.video(url)`에 그대로 넘기면 브라우저가 range request로 streaming.
+    만들어 클라이언트가 range request로 streaming 가능.
     """
     settings = get_settings()
     return cast(
@@ -431,7 +434,7 @@ def delete_video_for_analysis(analysis_id: str) -> None:
     )
     data = cast(dict[str, Any] | None, res.data)
     if not data:
-        raise LookupError(f"analysis not found: {analysis_id}")
+        raise LookupError(f"분석을 찾을 수 없습니다: {analysis_id}")
 
     video_id = cast(str, data["video_id"])
     video = cast(dict[str, Any] | None, data.get("videos"))
@@ -444,7 +447,7 @@ def delete_video_for_analysis(analysis_id: str) -> None:
         except Exception as e:  # noqa: BLE001
             # R2 정리 실패해도 DB 삭제는 진행 — 객체 부재(404)·네트워크 오류 모두 동일 처리.
             _log.warning(
-                "R2 cleanup failed: storage_path=%s err=%r", storage_path, e
+                "R2 정리 실패: storage_path=%s err=%r", storage_path, e
             )
 
     _client().table("videos").delete().eq("id", video_id).execute()

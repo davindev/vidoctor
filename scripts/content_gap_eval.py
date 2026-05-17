@@ -23,7 +23,7 @@ from vidoctor.eval._script_lib import (
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
-from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
+from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, compute_iou_metrics
 from vidoctor.graph.state import Category, Word
 from vidoctor.vision.content_gap import (
     JPEG_QUALITY,
@@ -100,7 +100,7 @@ def main() -> None:
     content_gap_labels = filter_labels_by_dim(labels, _DIMENSION)
     content_gap_intervals = [(lbl.start, lbl.end) for lbl in content_gap_labels]
 
-    m = _compute_iou_metrics(_DIMENSION, content_gap_intervals, events)
+    m = compute_iou_metrics(_DIMENSION, content_gap_intervals, events)
     metrics = metrics_to_dict(m) | {
         "latency_sec": round(diag.latency_sec, 3),
         "prompt_tokens": diag.prompt_tokens,

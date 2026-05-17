@@ -76,6 +76,8 @@ _FFMPEG_NO_STREAM_MARKER = "Output file does not contain any stream"
 
 @dataclass(frozen=True)
 class SilentInterval:
+    """VAD가 추출한 무발화 시간 구간 (초)."""
+
     start: float
     end: float
 
@@ -92,7 +94,7 @@ def silent_intervals_from_audio(
     if audio.size == 0:
         return [SilentInterval(0.0, video_duration)] if video_duration > 0 else []
 
-    audio_tensor = torch.from_numpy(audio).float()
+    audio_tensor = torch.from_numpy(audio).float()  # pyright: ignore[reportPrivateImportUsage]
     speech_ts: list[dict[str, float]] = get_speech_timestamps(
         audio_tensor,
         _vad_model(),
@@ -196,7 +198,7 @@ def load_audio_or_empty(video_path: str) -> np.ndarray:
         return whisperx.load_audio(video_path)
     except RuntimeError as e:
         if _FFMPEG_NO_STREAM_MARKER in str(e):
-            _log.warning("audio track missing; dead_zone VAD step skipped: video=%s", video_path)
+            _log.warning("오디오 트랙 없음 — dead_zone VAD 단계 건너뜀: video=%s", video_path)
             return np.array([], dtype=np.float32)
         raise
 

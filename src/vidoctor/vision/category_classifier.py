@@ -105,7 +105,7 @@ async def classify_category(video_path: str) -> tuple[Category, LLMCallMetrics]:
     except Exception:
         # 사용자가 명시적으로 카테고리 골랐으면 성공했을 분석을 자동 분류 LLM 장애가
         # 죽이지 않도록 — fallback 후 분석은 진행.
-        _log.warning("classify_category LLM call failed, falling back to 'other'", exc_info=True)
+        _log.warning("classify_category LLM 호출 실패, 'other'로 fallback", exc_info=True)
         return "other", empty
 
     if parsed.confidence >= _MIN_CONFIDENCE:

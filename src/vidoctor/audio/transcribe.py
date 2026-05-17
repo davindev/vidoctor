@@ -22,15 +22,17 @@ import whisperx
 
 from vidoctor.graph.state import Word
 
-DEVICE = "cpu"
-COMPUTE_TYPE = "int8"
+DEVICE = "cpu"                          # CPU 추론 (Apple Silicon에서 안정, CUDA 없는 환경 호환)
+COMPUTE_TYPE = "int8"                   # int8 양자화 (속도 ↑ 메모리 ↓, 한국어 정확도 영향 미미)
 DEFAULT_MODEL_NAME = "large-v3-turbo"
 LANGUAGE = "ko"
-BATCH_SIZE = 16
+BATCH_SIZE = 16                         # WhisperX 권장 default, 16GB RAM에서 안정
 
 
 @dataclass(frozen=True)
 class _LoadedModels:
+    """lazy load된 WhisperX ASR + wav2vec2 align 모델 묶음 (lru_cache 결과)."""
+
     asr: Any
     align_model: Any
     align_metadata: Any

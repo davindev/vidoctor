@@ -19,6 +19,8 @@ from vidoctor.graph.state import Dimension
 
 
 class GoldenLabel(BaseModel):
+    """골든셋 라벨 한 행 (CSV에서 파싱). cps만 kind 채움, 나머지 차원은 None."""
+
     start: float
     end: float
     dimension: Dimension
@@ -55,7 +57,7 @@ def load_labels(csv_path: Path | str) -> list[GoldenLabel]:
                 f"(허용 컬럼: {sorted(_KNOWN_COLUMNS)})"
             )
         for row in reader:
-            if not row.get("start") or not row.get("dimension"):
+            if not row.get("start") or not row.get("end") or not row.get("dimension"):
                 continue
             # kind는 cps에만 채워지는 Optional이라 빈 문자열은 None으로 정규화.
             # note는 항상 str이라 빈값 그대로 보존.

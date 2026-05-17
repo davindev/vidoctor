@@ -50,6 +50,7 @@ _PUNCT_RE = re.compile(r"[^\w가-힣]")
 
 
 def normalize_word(text: str) -> str:
+    """단어에서 한글·영숫자 외 문자(구두점 등)를 제거한 정규화 결과."""
     return _PUNCT_RE.sub("", text).strip()
 
 

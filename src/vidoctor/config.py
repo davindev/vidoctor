@@ -7,14 +7,15 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # config.py(parents[0]) → src/(parents[1]) → repo root(parents[2], .env 위치).
-_ROOT = Path(__file__).resolve().parents[2]
+# scripts/·eval/·vision에서 import해서 사용 — 모듈 외부 public 상수.
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
     """OpenAI/Supabase/R2/Langfuse/MLflow 자격증명 + 호스트."""
 
     model_config = SettingsConfigDict(
-        env_file=str(_ROOT / ".env"),
+        env_file=str(ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )

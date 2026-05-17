@@ -32,9 +32,9 @@ class _JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        aid = analysis_id_var.get()
-        if aid is not None:
-            payload["analysis_id"] = aid
+        analysis_id = analysis_id_var.get()
+        if analysis_id is not None:
+            payload["analysis_id"] = analysis_id
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         # logger.info("...", extra={"key": ...})로 들어온 사용자 정의 필드 흡수.

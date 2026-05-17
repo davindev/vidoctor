@@ -1,6 +1,6 @@
 """vision 모듈 공용 cv2.VideoCapture 라이프사이클 + 프레임 인코딩.
 
-`content_gap`·`dead_zone`·`gaze`·`category_classifier` 5곳이 같은 패턴을 복사하던 것을
+`content_gap`·`dead_zone`·`gaze`·`category_classifier` 4곳이 같은 패턴을 복사하던 것을
 한 곳에 모은다.
 
 - `open_capture`: `cv2.VideoCapture` 컨텍스트 매니저 — open 실패 시 명확한 에러 + 항상 release.

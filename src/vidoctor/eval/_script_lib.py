@@ -126,18 +126,18 @@ def filter_labels_by_dim(
     return filtered
 
 
-def metrics_to_dict(m: DimensionMetrics, *, include_iou: bool = True) -> dict[str, float]:
+def metrics_to_dict(metrics: DimensionMetrics, *, include_iou: bool = True) -> dict[str, float]:
     """DimensionMetrics를 MLflow log_metrics 호환 dict로 변환한다."""
     out: dict[str, float] = {
-        "tp": m.tp,
-        "fp": m.fp,
-        "fn": m.fn,
-        "precision": m.precision,
-        "recall": m.recall,
-        "f1": m.f1,
+        "tp": metrics.tp,
+        "fp": metrics.fp,
+        "fn": metrics.fn,
+        "precision": metrics.precision,
+        "recall": metrics.recall,
+        "f1": metrics.f1,
     }
     if include_iou:
-        out["temporal_iou_mean"] = m.temporal_iou_mean
+        out["temporal_iou_mean"] = metrics.temporal_iou_mean
     return out
 
 

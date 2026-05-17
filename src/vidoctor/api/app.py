@@ -86,6 +86,8 @@ app.add_middleware(
 
 
 class AnalysisListItem(BaseModel):
+    """사이드바 분석 리스트 한 행 (videos JOIN 메타 포함)."""
+
     id: str
     started_at: str | None
     finished_at: str | None
@@ -96,6 +98,8 @@ class AnalysisListItem(BaseModel):
 
 
 class FindingItem(BaseModel):
+    """차원별 발견 사항 — start/end + 차원 고유 payload(JSONB)."""
+
     dimension: str
     start: float
     end: float
@@ -103,11 +107,15 @@ class FindingItem(BaseModel):
 
 
 class SuggestionItem(BaseModel):
+    """LLM 개선 제안 + 참조 finding ref 리스트."""
+
     text: str
     finding_refs: list[str]
 
 
 class StepMetric(BaseModel):
+    """LLM 단계별 비용·latency·token 메타."""
+
     step: str
     model: str
     cost_usd: float
@@ -117,6 +125,8 @@ class StepMetric(BaseModel):
 
 
 class SpeakerTurn(BaseModel):
+    """화자 분리 단위 발화 구간 (start~end + 화자 식별자 + 텍스트 미리보기)."""
+
     start: float
     end: float
     speaker: str
@@ -125,12 +135,16 @@ class SpeakerTurn(BaseModel):
 
 
 class SpeakerDiarization(BaseModel):
+    """화자 분리 결과 — 주 화자 + 화자별 누적 시간 + turn 리스트."""
+
     main_speaker: str
     durations: dict[str, float]
     turns: list[SpeakerTurn]
 
 
 class AnalysisDetail(BaseModel):
+    """분석 상세 페이지 응답 — meta + findings + suggestions + step metrics."""
+
     id: str
     started_at: str | None
     finished_at: str | None
@@ -145,6 +159,8 @@ class AnalysisDetail(BaseModel):
 
 
 class VideoUrlResponse(BaseModel):
+    """영상 R2 signed URL 응답 (영상 없으면 url=None)."""
+
     url: str | None
 
 
@@ -259,6 +275,7 @@ async def _save_upload_to_tmp(uploaded: UploadFile) -> tuple[Path, str]:
     """UploadFile을 청크 단위로 임시 파일에 떨궈 메모리 폭발 회피."""
     suffix = Path(uploaded.filename or "video.mp4").suffix or ".mp4"
     with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        # 8MB 청크 — 큰 영상도 메모리 폭주 없이 스트리밍 저장.
         while chunk := await uploaded.read(8 * 1024 * 1024):
             tmp.write(chunk)
         return Path(tmp.name), (uploaded.filename or "video.mp4")
@@ -321,7 +338,7 @@ async def _analyze_stream(
         else:
             if upload is None:
                 # endpoint XOR 검증이 빠졌을 때만 발생하는 invariant 위반.
-                raise RuntimeError("upload XOR url invariant broken")
+                raise RuntimeError("upload·url XOR invariant 위반")
             tmp_path, filename = await _save_upload_to_tmp(upload)
 
         # 2) auto면 분류(~1-2s)와 R2 업로드(수 초)를 병렬 실행 — 둘 다 IO bound이고
@@ -348,7 +365,8 @@ async def _analyze_stream(
         analysis_id_token = analysis_id_var.set(analysis_id)
         _log.info(
             "분석 시작",
-            extra={"category": category, "filename": filename, "source": "url" if url else "file"},
+            # LogRecord 표준 attr `filename`(호출 소스 파일명)과 충돌하므로 `video_filename` 사용.
+            extra={"category": category, "video_filename": filename, "source": "url" if url else "file"},
         )
         yield _sse("started", {"analysis_id": analysis_id})
         yield _sse("uploaded", {})
@@ -408,11 +426,11 @@ async def _analyze_stream(
 
     except (asyncio.CancelledError, GeneratorExit):
         # 클라이언트 disconnect — DB row가 in-progress로 영구히 남지 않게 fail 처리.
-        await _safe_fail("client disconnected")
+        await _safe_fail("클라이언트 연결 끊김")
         raise
     except TimeoutError:
         _log.warning("분석 파이프라인 타임아웃")
-        await _safe_fail("analysis timeout")
+        await _safe_fail("분석 타임아웃")
         yield _sse(
             "error",
             {

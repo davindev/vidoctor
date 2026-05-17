@@ -63,6 +63,8 @@ MIN_WINDOWS_FOR_STATS = 3
 
 @dataclass(frozen=True)
 class _Window:
+    """슬라이딩 윈도우 한 칸 (start~end 구간의 CPS 값 포함)."""
+
     start: float
     end: float
     cps: float
@@ -124,6 +126,7 @@ def _char_count(words: list[Word], start: float, end: float) -> float:
 
 
 def sliding_windows(words: list[Word]) -> list[_Window]:
+    """단어 시퀀스를 5초/1초 step 슬라이딩 윈도우로 묶어 윈도우별 CPS 계산. 빈 입력 시 []."""
     if not words:
         return []
 
@@ -188,6 +191,7 @@ def _merge_adjacent(events: list[CPSEvent]) -> list[CPSEvent]:
     merged = [events[0]]
     for ev in events[1:]:
         last = merged[-1]
+        # 인접 윈도우는 정확히 STEP_SEC 떨어져 있지만 부동소수점 오차 흡수로 0.1s 마진.
         if last.kind == ev.kind and ev.start - last.end < STEP_SEC + 0.1:
             last_dur = last.end - last.start
             ev_dur = ev.end - ev.start

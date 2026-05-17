@@ -89,6 +89,8 @@ _RUBRICS: dict[Category, str] = {
 
 @dataclass(frozen=True)
 class FrameSample:
+    """LLM에 보낼 한 시점 샘플 — 프레임 base64 jpg + 주변 transcript."""
+
     time_sec: float
     image_b64: str
     transcript_text: str
@@ -369,8 +371,8 @@ async def detect_with_diagnostics(
     if not isinstance(parsed, _ContentGapResponse):
         parsed = _ContentGapResponse(issues=[])
 
-    prompt_tok, completion_tok = extract_token_usage(raw)
-    total_tok = prompt_tok + completion_tok
+    prompt_tokens, completion_tokens = extract_token_usage(raw)
+    total_tokens = prompt_tokens + completion_tokens
     raw_text = ""
     if raw is not None:
         content = getattr(raw, "content", "")
@@ -387,10 +389,10 @@ async def detect_with_diagnostics(
         samples=samples,
         issues_raw=[i.model_dump() for i in parsed.issues],
         latency_sec=latency,
-        prompt_tokens=prompt_tok,
-        completion_tokens=completion_tok,
-        total_tokens=total_tok,
-        cost_usd=estimate_cost_usd(model_name, prompt_tok, completion_tok),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        cost_usd=estimate_cost_usd(model_name, prompt_tokens, completion_tokens),
         raw_text=raw_text,
     )
 

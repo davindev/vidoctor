@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from operator import add
-from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -43,7 +43,7 @@ CATEGORY_DIMENSIONS: dict[Category, tuple[Dimension, ...]] = {
 
 
 class Word(BaseModel):
-    """WhisperX word-level timestamp."""
+    """WhisperX 단어 단위 타임스탬프."""
 
     text: str
     start: float
@@ -107,6 +107,8 @@ class ContentGapEvent(BaseModel):
 
 
 class Suggestion(BaseModel):
+    """LLM이 생성한 개선 제안 + 참조 finding 식별자 리스트."""
+
     text: str
     finding_refs: list[str] = Field(default_factory=list)
 
@@ -152,16 +154,7 @@ def iter_dimension_events(
         yield dim, list(events)
 
 
-# Suggestion.finding_refs 직렬화. 형식 변경 시 이 한 쌍의 함수만 수정.
+# Suggestion.finding_refs 직렬화. 형식 변경 시 이 함수만 수정.
 def format_finding_ref(dimension: Dimension, idx: int) -> str:
+    """(dimension, idx) → 'filler:0' 형식 ref 식별자."""
     return f"{dimension}:{idx}"
-
-
-def parse_finding_ref(ref: str) -> tuple[Dimension, int] | None:
-    """ref → (dimension, idx). 형식이 깨졌거나 dimension이 알 수 없으면 None."""
-    if ":" not in ref:
-        return None
-    dim_str, idx_str = ref.split(":", 1)
-    if not idx_str.isdigit() or dim_str not in DIM_TO_STATE_FIELD:
-        return None
-    return cast(Dimension, dim_str), int(idx_str)

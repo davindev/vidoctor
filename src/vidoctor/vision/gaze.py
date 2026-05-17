@@ -456,6 +456,7 @@ def _detect_webcam_roi(video_path: str) -> _ROI | None:
 
 
 def sample_video_pose(video_path: str) -> list[PoseSample]:
+    """영상 → 5fps 프레임 단위 head pose 측정 리스트. ROI 추정 실패 시 빈 list."""
     # 1단계: 웹캠 ROI 자동 추정. 4코너 폴백까지 실패하면 FaceLandmarker는 BlazeFace보다
     # 큰 얼굴을 요구하므로 의미 있는 결과를 못 낸다 → 즉시 빈 list로 빠른 종료.
     roi = _detect_webcam_roi(video_path)

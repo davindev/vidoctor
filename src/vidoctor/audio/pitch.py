@@ -69,15 +69,15 @@ def window_pitch_features(
     voiced 프레임이 MIN_VOICED_FRAMES 미만이면 None — multi-feature detector가 그 윈도우는
     F0 신호 없는 것으로 처리해야 한다.
     """
-    out: list[WindowPitch | None] = []
+    features: list[WindowPitch | None] = []
     for start, end in windows:
         mask = (times >= start) & (times < end)
         voiced = f0[mask]
         voiced = voiced[~np.isnan(voiced)]
         if len(voiced) < MIN_VOICED_FRAMES:
-            out.append(None)
+            features.append(None)
             continue
-        out.append(
+        features.append(
             WindowPitch(
                 start=start,
                 end=end,
@@ -86,4 +86,4 @@ def window_pitch_features(
                 f0_range=float(np.max(voiced) - np.min(voiced)),
             )
         )
-    return out
+    return features

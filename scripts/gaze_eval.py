@@ -24,7 +24,7 @@ from vidoctor.eval._script_lib import (
     write_eval_dump,
 )
 from vidoctor.eval.labels import load_labels
-from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, _compute_iou_metrics
+from vidoctor.eval.metrics import DIM_IOU_THRESHOLD, compute_iou_metrics
 from vidoctor.vision.gaze import (
     MERGE_GAP_SEC,
     MIN_DURATION_SEC,
@@ -236,7 +236,7 @@ def main() -> None:
     gaze_labels = filter_labels_by_dim(labels, _DIMENSION)
     gaze_intervals = [(lbl.start, lbl.end) for lbl in gaze_labels]
 
-    m = _compute_iou_metrics(_DIMENSION, gaze_intervals, events)
+    m = compute_iou_metrics(_DIMENSION, gaze_intervals, events)
     metrics = metrics_to_dict(m)
     _log.info(
         "gaze: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
