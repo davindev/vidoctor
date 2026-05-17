@@ -1,15 +1,20 @@
+"""환경변수 기반 설정 — pydantic-settings로 .env 자동 로드."""
+
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ROOT = Path(__file__).resolve().parents[2]
+# config.py(parents[0]) → src/(parents[1]) → repo root(parents[2], .env 위치).
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    """OpenAI/Supabase/R2/Langfuse/MLflow 자격증명 + 호스트."""
+
     model_config = SettingsConfigDict(
-        env_file=str(ROOT / ".env"),
+        env_file=str(_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -35,4 +40,6 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """프로세스 수명 동안 1회만 로드. 모든 모듈이 공유."""
+    # BaseSettings는 env에서 필드 동적 로드 — pyright가 필수 인자 누락으로 오해.
     return Settings()  # pyright: ignore[reportCallIssue]
