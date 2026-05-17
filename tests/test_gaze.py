@@ -304,7 +304,7 @@ def test_solve_head_pose_head_left_returns_negative_yaw():
     reason="set VIDOCTOR_RUN_INTEGRATION=1 to run real-video gaze integration",
 )
 def test_detect_gaze_on_lecture_video_runs_without_crash():
-    video = Path("data/golden/lecture.mp4")
+    video = Path("data/golden/inputs/lecture.mp4")
     if not video.exists():
         pytest.skip(f"missing fixture: {video}")
     events = asyncio.run(detect_gaze_events(str(video)))

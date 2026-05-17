@@ -149,31 +149,31 @@ def test_match_points_in_intervals_empty_inputs():
 
 
 def test_dimension_metrics_perfect():
-    m = DimensionMetrics(dimension="filler", tp=5, fp=0, fn=0, iou_sum=4.5)
-    assert m.precision == 1.0
-    assert m.recall == 1.0
-    assert m.f1 == 1.0
-    assert m.temporal_iou_mean == 0.9
+    metrics = DimensionMetrics(dimension="filler", tp=5, fp=0, fn=0, iou_sum=4.5)
+    assert metrics.precision == 1.0
+    assert metrics.recall == 1.0
+    assert metrics.f1 == 1.0
+    assert metrics.temporal_iou_mean == 0.9
 
 
 def test_dimension_metrics_only_fp():
-    m = DimensionMetrics(dimension="filler", tp=0, fp=3, fn=0)
-    assert m.precision == 0.0
-    assert m.recall == 0.0
-    assert m.f1 == 0.0
+    metrics = DimensionMetrics(dimension="filler", tp=0, fp=3, fn=0)
+    assert metrics.precision == 0.0
+    assert metrics.recall == 0.0
+    assert metrics.f1 == 0.0
 
 
 def test_dimension_metrics_balanced():
     # P=0.5, R=0.5 → F1=0.5
-    m = DimensionMetrics(dimension="filler", tp=1, fp=1, fn=1)
-    assert m.precision == 0.5
-    assert m.recall == 0.5
-    assert m.f1 == pytest.approx(0.5)
+    metrics = DimensionMetrics(dimension="filler", tp=1, fp=1, fn=1)
+    assert metrics.precision == 0.5
+    assert metrics.recall == 0.5
+    assert metrics.f1 == pytest.approx(0.5)
 
 
 def test_dimension_metrics_zero_tp_iou_mean_is_zero():
-    m = DimensionMetrics(dimension="filler", tp=0, fp=2, fn=2)
-    assert m.temporal_iou_mean == 0.0
+    metrics = DimensionMetrics(dimension="filler", tp=0, fp=2, fn=2)
+    assert metrics.temporal_iou_mean == 0.0
 
 
 # ---------------------------------------------------------------------------

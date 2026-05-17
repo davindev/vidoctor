@@ -26,18 +26,18 @@ from vidoctor.eval.metrics import DimensionMetrics
 # ---------------------------------------------------------------------------
 
 
-def testexisting_file_returns_path_for_real_file(tmp_path: Path):
+def test_existing_file_returns_path_for_real_file(tmp_path: Path):
     f = tmp_path / "video.mp4"
     f.write_text("")
     assert existing_file(str(f)) == f
 
 
-def testexisting_file_raises_on_missing(tmp_path: Path):
+def test_existing_file_raises_on_missing(tmp_path: Path):
     with pytest.raises(argparse.ArgumentTypeError, match="찾을 수 없습니다"):
         existing_file(str(tmp_path / "nope.mp4"))
 
 
-def testexisting_file_raises_on_directory(tmp_path: Path):
+def test_existing_file_raises_on_directory(tmp_path: Path):
     with pytest.raises(argparse.ArgumentTypeError, match="파일이 아닙니다"):
         existing_file(str(tmp_path))
 
