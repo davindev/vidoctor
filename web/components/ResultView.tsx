@@ -56,9 +56,6 @@ const FINDING_DETAIL: Record<Dimension, (ev: FindingItem) => string> = {
   content_gap: (ev) => String(ev.payload.description ?? ""),
 };
 
-const findingDetail = (dim: Dimension, ev: FindingItem): string =>
-  FINDING_DETAIL[dim](ev);
-
 export function ResultView({ analysisId, onDeleted }: Props) {
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -349,10 +346,7 @@ function IssueRow({
           {DIMENSION_DESC[dim]}
         </div>
         {/* table style — Analysis.html ts-row[data-style="table"] */}
-        <div
-          className="flex flex-col border-t border-line"
-          style={{ ["--c" as never]: color }}
-        >
+        <div className="flex flex-col border-t border-line">
           {events.map((ev, i) => (
             <button
               key={i}
@@ -367,7 +361,7 @@ function IssueRow({
                 {fmtHMS(ev.start)}
               </span>
               <span className="text-[12.5px] leading-[1.5] text-ink-2">
-                {findingDetail(dim, ev) || "—"}
+                {FINDING_DETAIL[dim](ev) || "—"}
               </span>
             </button>
           ))}

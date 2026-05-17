@@ -93,6 +93,9 @@ export default function Home() {
     const status: { exit: "complete" | "error" | "stream-closed" } = {
       exit: "stream-closed",
     };
+    // postAnalyze가 throw하는 경우(네트워크 실패 등) 메시지를 담아둘 로컬 슬롯.
+    // SSE error 이벤트는 setState 경로로 들어와 state.errorMessage를 채운다.
+    let thrownError: string | null = null;
 
     try {
       await postAnalyze({
@@ -134,14 +137,7 @@ export default function Home() {
       });
     } catch (e) {
       status.exit = "error";
-      setState({
-        kind: "analyzing",
-        category: initialCategory,
-        filename: initialFilename,
-        phase: initialPhase,
-        completed: new Set(),
-        errorMessage: e instanceof Error ? e.message : String(e),
-      });
+      thrownError = e instanceof Error ? e.message : String(e);
     }
 
     if (status.exit === "complete") {
@@ -151,9 +147,10 @@ export default function Home() {
     // 에러 또는 unexpected stream close — 사용자가 메시지를 읽을 수 있도록 idle로
     // 복귀하되 lastError를 들고 가서 IdleForm 상단에 배너로 노출.
     setState((prev) => {
-      if (prev.kind !== "analyzing") return prev;
+      const inflightError = prev.kind === "analyzing" ? prev.errorMessage : null;
       const msg =
-        prev.errorMessage ??
+        thrownError ??
+        inflightError ??
         (status.exit === "stream-closed"
           ? "분석이 완료되기 전에 연결이 끊어졌습니다."
           : "분석 중 오류가 발생했습니다.");

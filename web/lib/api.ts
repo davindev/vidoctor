@@ -131,8 +131,9 @@ export interface VideoUrlResponse {
   url: string | null;
 }
 
-/** API base URL — `NEXT_PUBLIC_API_BASE` 미설정 시 빈 문자열로 fall back해 next.config의
- * rewrite proxy를 통하게 한다. dev 환경에서는 직접 FastAPI를 가리켜 proxy 회피 권장. */
+/** API base URL — dev에선 `NEXT_PUBLIC_API_BASE=http://localhost:8000`처럼 FastAPI를
+ * 직접 가리키고 (Next dev proxy 우회로 multipart streaming의 ECONNRESET 회피), prod
+ * 동일 origin 배포에선 미설정 → 빈 문자열로 떨어져 relative path가 그대로 동작. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 /** HTTP 응답이 실패면 body까지 포함한 Error 던지기. fetch 호출자가 공유. */

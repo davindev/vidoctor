@@ -3,6 +3,7 @@
 import {
   CATEGORY_DIMENSIONS,
   DIMENSION_LABEL,
+  DIMENSION_ORDER,
   type Category,
   type Dimension,
 } from "@/lib/api";
@@ -29,17 +30,11 @@ interface Props {
   errorMessage: string | null;
 }
 
-const ALL_DIMS: Dimension[] = [
-  "filler",
-  "cps",
-  "dead_zone",
-  "gaze",
-  "content_gap",
-];
-
 // branch 좌표 — viewBox 360 기준 N+1 분할로 derive해 노드 추가/제거 시 한 곳만 갱신.
 const VIEW_HEIGHT = 360;
-const BRANCH_RATIOS = ALL_DIMS.map((_, i) => (i + 1) / (ALL_DIMS.length + 1));
+const BRANCH_RATIOS = DIMENSION_ORDER.map(
+  (_, i) => (i + 1) / (DIMENSION_ORDER.length + 1),
+);
 const BRANCH_TOPS = BRANCH_RATIOS.map((r) => `${(r * 100).toFixed(2)}%`);
 const WIRE_BRANCH_Y = BRANCH_RATIOS.map((r) => r * VIEW_HEIGHT);
 
@@ -58,9 +53,9 @@ function deriveStates(
   // 분류 전(category=null)에는 어떤 차원이 활성될지 모르므로 모두 후보로 두고 waiting 표시.
   const activeDimList: readonly Dimension[] = category
     ? CATEGORY_DIMENSIONS[category]
-    : ALL_DIMS;
+    : DIMENSION_ORDER;
   const activeDims = new Set(activeDimList);
-  const branches: NodeState[] = ALL_DIMS.map((dim) => {
+  const branches: NodeState[] = DIMENSION_ORDER.map((dim) => {
     if (!activeDims.has(dim)) return "skipped";
     if (completed.has(`detect_${dim}`)) return "done";
     return transcribeDone ? "active" : "waiting";
@@ -93,9 +88,8 @@ function statusText(
   return "대기중";
 }
 
-// 5단계 모델: 업로드 → 음성 전사 → 5차원 검출 → 개선 제안 → 완료. UI 라벨은 "N/4 진행중"
-// 으로 표시(allDone 분기 별도)이라 step <= 4까지 매핑. 마지막 단계는 suggest=done이지만
-// allDone 가드가 그 케이스를 가져가므로 여기 step=4는 "suggest 진행 중"을 의미.
+// 진행 단계 4개: 업로드 → 음성 전사 → 5차원 검출 → 개선 제안. 완료 상태(allDone)는
+// 호출부에서 별도 분기로 가져가므로 여기서는 1..4만 반환 — step=4는 "개선 제안 진행 중".
 function progressStep(s: ReturnType<typeof deriveStates>): number {
   const branchesDone = s.branches.every(
     (b) => b === "done" || b === "skipped",
@@ -194,7 +188,7 @@ export function Pipeline({
           label="음성 전사"
           state={states.transcribe}
         />
-        {ALL_DIMS.map((dim, i) => (
+        {DIMENSION_ORDER.map((dim, i) => (
           <PipelineNode
             key={dim}
             left="66%"

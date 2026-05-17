@@ -8,7 +8,6 @@ const sourceSerif = Source_Serif_4({
   subsets: ["latin"],
   variable: "--font-source-serif-4",
   weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
   display: "swap",
 });
 
