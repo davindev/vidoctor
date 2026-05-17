@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # config.py(parents[0]) → src/(parents[1]) → repo root(parents[2], .env 위치).
@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # None이면 mlflow native default(`file:./mlruns`) 사용. .env에서 절대경로 sqlite URI를
     # 지정하면 평가 결과·mlflow ui가 동일 store를 보도록 정렬된다.
     mlflow_tracking_uri: str | None = None
+
+    # WhisperX 모델 swap용 dev 옵션. None이면 audio/transcribe.py의 DEFAULT_MODEL_NAME.
+    # 기존 VIDOCTOR_WHISPER_MODEL env var 이름 유지 (validation_alias).
+    whisper_model: str | None = Field(default=None, validation_alias="VIDOCTOR_WHISPER_MODEL")
 
 
 @lru_cache(maxsize=1)

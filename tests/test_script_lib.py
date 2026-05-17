@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from vidoctor.config import get_settings
 from vidoctor.eval._script_lib import (
     existing_file,
     eval_dump_path,
@@ -20,6 +21,14 @@ from vidoctor.eval._script_lib import (
 )
 from vidoctor.eval.labels import GoldenLabel
 from vidoctor.eval.metrics import DimensionMetrics
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """Settings는 lru_cache라 monkeypatch.setenv 효과가 캐시에 막힘 — 매 테스트마다 clear."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 # ---------------------------------------------------------------------------
 # existing_file — argparse type validator
@@ -90,9 +99,12 @@ def test_transcript_cache_path_embeds_model_tag(monkeypatch: pytest.MonkeyPatch)
 
 def test_transcript_cache_path_isolates_models(monkeypatch: pytest.MonkeyPatch):
     # 두 모델의 캐시가 같은 경로에 안 떨어지는지 — model_tag 시스템의 핵심 불변식.
+    # Settings가 lru_cache라 setenv 후 cache_clear로 재로드 강제.
     monkeypatch.setenv("VIDOCTOR_WHISPER_MODEL", "medium")
+    get_settings.cache_clear()
     medium_path = transcript_cache_path(Path("/tmp/lecture.mp4"))
     monkeypatch.setenv("VIDOCTOR_WHISPER_MODEL", "openai/whisper-large-v3")
+    get_settings.cache_clear()
     large_path = transcript_cache_path(Path("/tmp/lecture.mp4"))
     assert medium_path != large_path
 

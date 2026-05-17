@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -95,7 +94,7 @@ def write_eval_dump(out_path: Path, data: dict, *, force: bool) -> None:
 
 def model_tag() -> str:
     """WhisperX 모델별 캐시 키를 반환한다."""
-    model = os.environ.get("VIDOCTOR_WHISPER_MODEL")
+    model = get_settings().whisper_model
     if not model:
         return "default"
     return Path(model).name.replace("/", "_") or "default"

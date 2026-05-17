@@ -130,6 +130,7 @@ def _row_to_event(row: dict[str, Any]) -> BaseModel:
 
 
 def _collect_finding_rows(analysis_id: str, state: AnalysisState) -> list[dict[str, Any]]:
+    """state의 5차원 event를 findings 테이블 bulk insert row 리스트로 변환."""
     rows: list[dict[str, Any]] = []
     for dim, field in DIM_TO_STATE_FIELD.items():
         events = state.get(field, []) or []  # type: ignore[literal-required]

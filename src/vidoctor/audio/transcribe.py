@@ -11,7 +11,6 @@ load되어 프로세스 수명 동안 캐시.
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Any
 import numpy as np
 import whisperx
 
+from vidoctor.config import get_settings
 from vidoctor.graph.state import Word
 
 DEVICE = "cpu"                          # CPU 추론 (Apple Silicon에서 안정, CUDA 없는 환경 호환)
@@ -40,8 +40,10 @@ class _LoadedModels:
 
 @lru_cache(maxsize=1)
 def _load_models() -> _LoadedModels:
+    """ASR + wav2vec2 align 모델 lazy load. settings.whisper_model 우선, 없으면 default."""
+    model_name = get_settings().whisper_model or DEFAULT_MODEL_NAME
     asr = whisperx.load_model(
-        os.environ.get("VIDOCTOR_WHISPER_MODEL", DEFAULT_MODEL_NAME),
+        model_name,
         device=DEVICE,
         compute_type=COMPUTE_TYPE,
         language=LANGUAGE,
@@ -54,6 +56,7 @@ def _load_models() -> _LoadedModels:
 
 
 def _transcribe_sync(media_path: str) -> tuple[list[Word], np.ndarray]:
+    """파일 fast-fail 후 WhisperX ASR + wav2vec2 align → Word 리스트 + 16kHz mono."""
     if not Path(media_path).exists():
         raise FileNotFoundError(f"미디어 파일 없음: {media_path}")
 

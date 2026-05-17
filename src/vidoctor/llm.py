@@ -118,6 +118,7 @@ def _init_langfuse() -> Langfuse:
 
 @lru_cache(maxsize=1)
 def _langfuse_handler() -> CallbackHandler:
+    """글로벌 Langfuse 초기화 보장 후 CallbackHandler 인스턴스 (1회 캐시)."""
     _init_langfuse()
     return CallbackHandler()
 
