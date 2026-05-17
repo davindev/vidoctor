@@ -44,7 +44,7 @@ def configure_eval_logging(run_name: str, *, level: int = logging.INFO) -> None:
     root.setLevel(level)
 
 
-def _existing_file(raw: str) -> Path:
+def existing_file(raw: str) -> Path:
     """존재하는 파일 경로만 통과시키는 argparse type validator."""
     p = Path(raw)
     if not p.exists():
@@ -57,8 +57,8 @@ def _existing_file(raw: str) -> Path:
 def build_eval_parser(description: str) -> argparse.ArgumentParser:
     """공통 인자가 등록된 argparse 파서를 반환한다."""
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("video_path", type=_existing_file)
-    parser.add_argument("labels_csv", type=_existing_file)
+    parser.add_argument("video_path", type=existing_file)
+    parser.add_argument("labels_csv", type=existing_file)
     parser.add_argument(
         "--run-name",
         required=True,

@@ -100,8 +100,8 @@ def main() -> None:
     content_gap_labels = filter_labels_by_dim(labels, _DIMENSION)
     content_gap_intervals = [(lbl.start, lbl.end) for lbl in content_gap_labels]
 
-    m = compute_iou_metrics(_DIMENSION, content_gap_intervals, events)
-    metrics = metrics_to_dict(m) | {
+    dim_metrics = compute_iou_metrics(_DIMENSION, content_gap_intervals, events)
+    metrics = metrics_to_dict(dim_metrics) | {
         "latency_sec": round(diag.latency_sec, 3),
         "prompt_tokens": diag.prompt_tokens,
         "completion_tokens": diag.completion_tokens,
@@ -112,7 +112,8 @@ def main() -> None:
 
     _log.info(
         "content_gap: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
-        m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
+        dim_metrics.tp, dim_metrics.fp, dim_metrics.fn,
+        dim_metrics.precision, dim_metrics.recall, dim_metrics.f1,
     )
     _log.info(
         "  model=%s images=%d latency=%.2fs "

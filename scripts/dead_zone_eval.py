@@ -172,11 +172,12 @@ def main() -> None:
     dead_zone_labels = filter_labels_by_dim(labels, _DIMENSION)
     dead_zone_intervals = [(lbl.start, lbl.end) for lbl in dead_zone_labels]
 
-    m = compute_iou_metrics(_DIMENSION, dead_zone_intervals, events)
-    metrics = metrics_to_dict(m)
+    dim_metrics = compute_iou_metrics(_DIMENSION, dead_zone_intervals, events)
+    metrics = metrics_to_dict(dim_metrics)
     _log.info(
         "dead_zone(%s): TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
-        category, m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
+        category, dim_metrics.tp, dim_metrics.fp, dim_metrics.fn,
+        dim_metrics.precision, dim_metrics.recall, dim_metrics.f1,
     )
     _log.info(
         "  min_dur=%.1fs flow_max=%.3f silent_intervals=%d events=%d",

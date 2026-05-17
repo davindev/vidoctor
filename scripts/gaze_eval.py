@@ -236,11 +236,12 @@ def main() -> None:
     gaze_labels = filter_labels_by_dim(labels, _DIMENSION)
     gaze_intervals = [(lbl.start, lbl.end) for lbl in gaze_labels]
 
-    m = compute_iou_metrics(_DIMENSION, gaze_intervals, events)
-    metrics = metrics_to_dict(m)
+    dim_metrics = compute_iou_metrics(_DIMENSION, gaze_intervals, events)
+    metrics = metrics_to_dict(dim_metrics)
     _log.info(
         "gaze: TP=%d FP=%d FN=%d P=%.3f R=%.3f F1=%.3f",
-        m.tp, m.fp, m.fn, m.precision, m.recall, m.f1,
+        dim_metrics.tp, dim_metrics.fp, dim_metrics.fn,
+        dim_metrics.precision, dim_metrics.recall, dim_metrics.f1,
     )
     _log.info(
         "  yaw_thr=%.1f° pitch_thr=%.1f° min_dur=%.1fs merge_gap=%.2fs "

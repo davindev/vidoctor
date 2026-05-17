@@ -20,7 +20,7 @@ from typing import TypedDict, cast
 from pydantic import BaseModel
 
 from vidoctor.config import ROOT
-from vidoctor.eval._script_lib import _existing_file, configure_eval_logging
+from vidoctor.eval._script_lib import existing_file, configure_eval_logging
 from vidoctor.graph import run_analysis
 from vidoctor.graph.state import (
     DIM_TO_STATE_FIELD,
@@ -92,7 +92,7 @@ def _log_lecture_match_table(state: AnalysisState) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="5차원 graph 통합 스모크")
-    parser.add_argument("video_path", type=_existing_file)
+    parser.add_argument("video_path", type=existing_file)
     parser.add_argument("category", choices=["lecture", "vlog", "other"])
     args = parser.parse_args()
 

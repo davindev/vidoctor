@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from vidoctor.eval._script_lib import (
-    _existing_file,
+    existing_file,
     eval_dump_path,
     experiment_name,
     filter_labels_by_dim,
@@ -22,24 +22,24 @@ from vidoctor.eval.labels import GoldenLabel
 from vidoctor.eval.metrics import DimensionMetrics
 
 # ---------------------------------------------------------------------------
-# _existing_file — argparse type validator
+# existing_file — argparse type validator
 # ---------------------------------------------------------------------------
 
 
-def test_existing_file_returns_path_for_real_file(tmp_path: Path):
+def testexisting_file_returns_path_for_real_file(tmp_path: Path):
     f = tmp_path / "video.mp4"
     f.write_text("")
-    assert _existing_file(str(f)) == f
+    assert existing_file(str(f)) == f
 
 
-def test_existing_file_raises_on_missing(tmp_path: Path):
+def testexisting_file_raises_on_missing(tmp_path: Path):
     with pytest.raises(argparse.ArgumentTypeError, match="찾을 수 없습니다"):
-        _existing_file(str(tmp_path / "nope.mp4"))
+        existing_file(str(tmp_path / "nope.mp4"))
 
 
-def test_existing_file_raises_on_directory(tmp_path: Path):
+def testexisting_file_raises_on_directory(tmp_path: Path):
     with pytest.raises(argparse.ArgumentTypeError, match="파일이 아닙니다"):
-        _existing_file(str(tmp_path))
+        existing_file(str(tmp_path))
 
 
 # ---------------------------------------------------------------------------
