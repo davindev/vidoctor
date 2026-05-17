@@ -1,3 +1,5 @@
+"""LangGraph 기반 5차원 분석 오케스트레이션 패키지."""
+
 from collections.abc import Callable
 from functools import lru_cache
 from typing import Any, cast
@@ -29,14 +31,12 @@ async def run_analysis(
 ) -> AnalysisState:
     """카테고리별 5차원 graph 실행. UI·스크립트 공용 진입점.
 
-    `on_node_complete`가 주어지면 노드 완료마다 노드 이름으로 호출된다 — Streamlit
-    `st.status` 진행률 표시용. 호출자는 *멱등성*을 가정해야 한다 (LangGraph가 retry·
-    super-step에서 같은 노드를 다시 yield할 수 있고, fan-out 노드는 dict 순회 순서로
-    들어와 그래프 토폴로지 순서와 다를 수 있음). 콜백은 동기·블로킹.
+    `on_node_complete`: 노드 완료 시 노드 이름으로 호출되는 진행률 콜백 (동기·블로킹).
+    멱등 가정 — LangGraph의 retry·fan-out·super-step에서 같은 노드 이름이 토폴로지
+    순서와 다르게 다시 들어올 수 있다.
 
-    `astream`을 단일 패스로 사용해 진행 이벤트(updates)와 누적 최종 state(values)를
-    같이 회수 — `ainvoke` 별도 호출로 두 번 돌리는 비용 회피. 콜백이 없으면 values만
-    구독해 update yield 비용도 절약.
+    astream 단일 패스로 updates(진행)와 values(최종 state)를 동시 회수.
+    콜백 없으면 values만 구독해 update yield 비용 절약.
     """
     g = _compiled_graph()
     initial: dict[str, Any] = {"video_path": video_path, "category": category}

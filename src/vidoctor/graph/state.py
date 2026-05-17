@@ -1,9 +1,11 @@
+"""5차원 분석 graph의 state·도메인 타입 정의 — TypedDict + Pydantic Event 모델."""
+
 from collections.abc import Iterator
 from operator import add
 from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from vidoctor.llm import LLMCallMetrics
 
@@ -30,11 +32,9 @@ DIM_TO_STATE_FIELD: dict[Dimension, str] = {
     "content_gap": "content_gaps",
 }
 
-# 카테고리별 활성 차원. LangGraph conditional edge가 이 매핑을 보고 그래프 자체를 분기 →
-# 비활성 차원은 detection 노드가 호출되지 않는다.
-# - lecture: 5차원 모두
-# - vlog/인터뷰: 시선 이탈·내용 공백은 비활성 (의도된 컷어웨이·일상 기록 영상에 부적합)
-# - other(default): 시선 이탈만 비활성 (도메인 의존성 큼 — 음악·게임·예능 등)
+# 카테고리별 활성 차원. LangGraph conditional edge가 매핑 보고 그래프 자체 분기.
+# vlog는 시선 이탈·내용 공백 비활성 (의도된 컷어웨이·일상 영상),
+# other는 시선 이탈만 비활성 (음악·게임·예능 등 도메인 의존성 큼).
 CATEGORY_DIMENSIONS: dict[Category, tuple[Dimension, ...]] = {
     "lecture": ("filler", "cps", "dead_zone", "gaze", "content_gap"),
     "vlog": ("filler", "cps", "dead_zone"),
@@ -52,6 +52,8 @@ class Word(BaseModel):
 
 
 class FillerEvent(BaseModel):
+    """필러(어, 음, 그) 발화 구간."""
+
     start: float
     end: float
     text: str
@@ -61,6 +63,8 @@ class FillerEvent(BaseModel):
 
 
 class CPSEvent(BaseModel):
+    """초당 글자 수 이상치 구간 (너무 빠르거나 느림)."""
+
     start: float
     end: float
     cps: float
@@ -71,6 +75,8 @@ class CPSEvent(BaseModel):
 
 
 class DeadZoneEvent(BaseModel):
+    """무발화 구간 (긴 침묵)."""
+
     start: float
     end: float
 
@@ -79,6 +85,8 @@ class DeadZoneEvent(BaseModel):
 
 
 class GazeEvent(BaseModel):
+    """시선 이탈 구간 (방향 포함)."""
+
     start: float
     end: float
     direction: Direction
@@ -88,6 +96,8 @@ class GazeEvent(BaseModel):
 
 
 class ContentGapEvent(BaseModel):
+    """내용 공백 구간 (LLM이 발견)."""
+
     start: float
     end: float
     description: str
@@ -98,7 +108,7 @@ class ContentGapEvent(BaseModel):
 
 class Suggestion(BaseModel):
     text: str
-    finding_refs: list[str] = []
+    finding_refs: list[str] = Field(default_factory=list)
 
 
 class AnalysisState(TypedDict):
@@ -125,8 +135,8 @@ class AnalysisState(TypedDict):
 
     suggestions: NotRequired[list[Suggestion]]
 
-    # LLM 호출 비용·latency 누적. operator.add reducer로 여러 노드(content_gap·suggestions)
-    # 가 각자 list를 반환해도 LangGraph가 자동 concat. 영상당 총 비용은 합산해 산출.
+    # LLM 호출 비용·latency 누적. operator.add reducer로 여러 LLM 노드가 각자 list를
+    # 반환해도 LangGraph가 자동 concat. 영상당 총 비용은 합산해 산출.
     step_metrics: NotRequired[Annotated[list[LLMCallMetrics], add]]
 
 
@@ -142,8 +152,7 @@ def iter_dimension_events(
         yield dim, list(events)
 
 
-# Suggestion.finding_refs의 ref 식별자 형식 — Suggestion이 LLM·DB·UI 경계를 넘나들 때
-# 이 한 쌍의 함수가 직렬화/역직렬화 책임을 단독으로 진다. 형식 변경 시 여기만 수정.
+# Suggestion.finding_refs 직렬화. 형식 변경 시 이 한 쌍의 함수만 수정.
 def format_finding_ref(dimension: Dimension, idx: int) -> str:
     return f"{dimension}:{idx}"
 

@@ -1,16 +1,15 @@
 """5차원 분석 노드.
 
-카테고리별 차원 활성/비활성은 `pipeline.py`의 conditional edge가 결정하며, 이 모듈의
-detection 노드는 자기 차원만 책임진다 — detect_gaze / detect_content_gap이
-비활성 카테고리에서 호출되지 않는 것은 그래프가 보장.
+각 노드는 무거운 라이브러리(WhisperX, MediaPipe 등)를 함수 안에서 lazy import —
+비활성 차원의 모듈 로딩 비용 회피. 카테고리별 활성/비활성은 pipeline.py가 결정.
 
 - transcribe: WhisperX (faster-whisper-large-v3-turbo + wav2vec2 forced alignment)
 - detect_filler: 한국어 filler 사전 + 정규식
 - detect_cps: Net CPS 슬라이딩 윈도우 (5s/1s, pause >200ms 제외)
-- detect_dead_zone: Silero VAD 무발화 + Optical flow magnitude per-frame max
-- detect_gaze: MediaPipe Tasks FaceLandmarker + cv2.solvePnP head pose
-- detect_content_gap: GPT-4o Vision multi-image batch + ASR
-- generate_suggestions: GPT-4o-mini로 5차원 finding 통합 → 개선 제안 (suggestions.py)
+- detect_dead_zone: Silero VAD + Optical flow magnitude per-frame max
+- detect_gaze: MediaPipe FaceLandmarker + cv2.solvePnP head pose
+- detect_content_gap: GPT-4o Vision multi-image + ASR
+- generate_suggestions: GPT-4o-mini로 5차원 finding 통합 (suggestions.py)
 """
 
 import asyncio
@@ -33,13 +32,10 @@ async def detect_filler(state: AnalysisState) -> dict:
 
 
 async def detect_cps(state: AnalysisState) -> dict:
-    """카테고리별 정책 분기: vlog는 F0 multi-feature 결합, lecture/other는 cps 단독.
+    """카테고리별 분기: vlog는 F0 multi-feature 결합, 그 외는 cps 단독.
 
-    vlog는 야외·일상 녹화 환경에서 배경 노이즈·다른 화자 발화가 ASR 토큰에 섞여 들어
-    cps 측정을 오염한다. F0 결합은 메인 화자만이 강한 voiced 톤 신호를 갖는 특성을 이용해
-    노이즈 영역을 자동 cut — vlog F1 0.533 → 0.667(P 0.500 → 0.800). lecture는 통제된
-    녹화 환경이라 노이즈 거의 없고 발화 톤이 단조로워 F0 결합 시 라벨이 F0 임계 미달로
-    오히려 cut → cps 단독이 robust. other는 도메인 다양성으로 보수 fallback.
+    vlog는 배경 노이즈로 ASR이 오염되므로 F0(메인 화자 voiced 톤) 결합으로 노이즈 cut
+    — F1 0.533 → 0.667. lecture는 노이즈 적고 톤 단조로워 F0 결합 시 오히려 라벨 cut.
     """
     from vidoctor.audio.cps import detect_cps_anomalies, detect_cps_with_audio
 
