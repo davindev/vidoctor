@@ -80,3 +80,16 @@ filterwarnings = [
     # pyannote.audio가 torchcodec 로드 실패 시 경고 — fallback 동작하므로 무시
     "ignore::UserWarning:pyannote.audio.core.io",
 ]
+
+# 배포 이미지(Linux)는 CPU 추론이라 CUDA wheel(~2GB) 불필요 → PyTorch CPU index에서
+# 받아 이미지 크기 절감. macOS(로컬 dev)는 PyPI default가 이미 MPS 가속 포함 CPU
+# wheel이라 마커로 분기.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
