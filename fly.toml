@@ -1,0 +1,36 @@
+# Fly.io 백엔드 설정. 배포 가이드는 README 참고.
+
+app = "vidoctor"          # 실 배포 시 본인 앱 이름으로 교체
+primary_region = "nrt"    # 도쿄 — 한국 사용자 지연 가장 짧음
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # ML 모델 콜드 로드(~30s) 후 첫 분석 진행 — 한 인스턴스 유지가 시연 안정성↑.
+  # 비용 절감이 필요하면 auto_stop_machines = "stop"으로 바꾸고 첫 요청 지연 감수.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    # 동시 분석 cap은 앱 세마포어(2)가 통제. HTTP-level은 SSE long-lived 연결까지
+    # 여유 있게 잡아 polling·정적 요청도 함께 받도록.
+    hard_limit = 20
+    soft_limit = 10
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "2s"         # /healthz는 dict 즉시 반환이라 좀비 감지를 빠르게
+    grace_period = "60s"   # 모델 로드 시간 흡수
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  # performance-2x: 2 vCPU / 4GB RAM.
+  # WhisperX(int8) ~1.5GB + MediaPipe ~0.3GB + librosa/torch 워킹셋 등 합쳐 안정 운용.
+  size = "performance-2x"
+
+# 임시 영상 파일(NamedTemporaryFile)은 /tmp에 쌓이고 분석 종료 시 자동 unlink —
+# 별도 영구 볼륨 불필요. 영구 캐시가 필요해지면 [[mounts]] 블록 추가.

@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
+from vidoctor.config import get_settings
 from vidoctor.errors import SafeError
 from vidoctor.graph import Category, run_analysis
 from vidoctor.graph.state import (
@@ -69,15 +70,19 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Vidoctor API", version="0.1.0", lifespan=_lifespan)
 
-# Dev 단계 CORS — Next.js dev (localhost:3000) + 동일 호스트 prod 빌드 모두 허용.
-# prod 배포 시 origin allowlist 좁히는 것 권장.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(get_settings().frontend_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """Fly.io / 외부 모니터의 readiness probe. 가벼운 응답만 — DB·외부 API는 점검 안 함."""
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

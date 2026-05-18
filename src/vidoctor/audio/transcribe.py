@@ -15,12 +15,13 @@ from typing import Any
 import numpy as np
 import whisperx
 
-from vidoctor.config import get_settings
+from vidoctor.config import ROOT, get_settings
 from vidoctor.graph.state import Word
 
 DEVICE = "cpu"                          # CPU 추론 (Apple Silicon에서 안정, CUDA 없는 환경 호환)
 COMPUTE_TYPE = "int8"                   # int8 양자화 (속도 ↑ 메모리 ↓, 한국어 정확도 영향 미미)
-DEFAULT_MODEL_NAME = "large-v3-turbo"
+# 기본은 KsponSpeech fine-tuned. ROOT 기준이라 로컬·Docker 양쪽에서 해석된다.
+DEFAULT_MODEL_NAME = str(ROOT / "models" / "whisper-ko-ksponspeech-ct2")
 LANGUAGE = "ko"
 BATCH_SIZE = 16                         # WhisperX 권장 default, 16GB RAM에서 안정
 

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # config.py(parents[0]) → src/(parents[1]) → repo root(parents[2], .env 위치).
@@ -40,6 +40,22 @@ class Settings(BaseSettings):
 
     # WhisperX 모델 swap용 dev 옵션. None이면 audio/transcribe.py의 DEFAULT_MODEL_NAME.
     whisper_model: str | None = Field(default=None, validation_alias="VIDOCTOR_WHISPER_MODEL")
+
+    # CORS 허용 origin. 환경변수는 콤마 구분 문자열(예: "https://a,https://b"),
+    # 코드에서는 변경 불가 튜플로 노출. 기본은 로컬 dev, prod에선 Vercel URL을 콤마로 이어 붙인다.
+    frontend_origins: tuple[str, ...] = Field(
+        default=("http://localhost:3000", "http://127.0.0.1:3000"),
+        validation_alias="VIDOCTOR_FRONTEND_ORIGINS",
+    )
+
+    @field_validator("frontend_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, raw: object) -> object:
+        # pydantic-settings는 list/tuple env를 JSON 파싱하려 하지만, 사람이 채우는
+        # secrets는 콤마 구분이 더 자연스럽다.
+        if isinstance(raw, str):
+            return tuple(o.strip() for o in raw.split(",") if o.strip())
+        return raw
 
 
 @lru_cache(maxsize=1)
