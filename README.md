@@ -156,6 +156,19 @@
 
 전체 schema는 `/docs`(OpenAPI).
 
+### 비용·악용 보호
+
+공개 도메인 + 영상당 OpenAI 비용 발생 구조라 4중 안전망으로 봇·악의적 사용을 차단한다.
+
+| 계층 | 한도 | 차단 방식 |
+|---|---|---|
+| **동시성** | 동시 분석 2건 | 머신 내 `asyncio.Semaphore` — ML 모델 메모리 OOM 방지 |
+| **IP rate limit** | IP당 시간 3건 / 일 10건 | `slowapi`가 429로 자동 차단. Fly의 `fly-client-ip` 헤더 우선 사용해 proxy 뒤 실 클라이언트 IP 식별 |
+| **전체 사용자 합산 일일 한도** | 50건/일 | `VIDOCTOR_DAILY_QUOTA` env. IP rate limit이 우회되어도 SSE error로 차단해 OpenAI 비용 폭증 방지 |
+| **OpenAI 월 한도** | $50/월 + 자동 충전 cap | OpenAI 대시보드. 애플리케이션 외부 cap이라 백엔드 우회로도 절대 못 넘김 — 봇 공격 받아도 카드 청구는 $50에서 멈춤 |
+
+한도 도달 시 사용자에겐 한국어 에러 메시지로 안내, 운영자는 Langfuse 대시보드에서 LLM 호출별 비용·실패 케이스를 실시간 추적.
+
 ---
 
 ## 셋업
