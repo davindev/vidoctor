@@ -4,7 +4,7 @@
 
 ![Vidoctor 메인 화면](docs/images/main.gif)
 
-- **데모**: `https://vidoctor.example.com` *(placeholder)*
+- **데모**: <https://vidoctor.app>
 - **스택**: Python · FastAPI · LangGraph · LangChain · WhisperX · MediaPipe · OpenCV · GPT-4o Vision · Next.js 15 · Supabase · Cloudflare R2 · Langfuse · MLflow
 
 ---
