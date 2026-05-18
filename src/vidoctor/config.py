@@ -2,9 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # config.py(parents[0]) → src/(parents[1]) → repo root(parents[2], .env 위치).
 # scripts/·eval/·vision에서 import해서 사용 — 모듈 외부 public 상수.
@@ -43,7 +44,9 @@ class Settings(BaseSettings):
 
     # CORS 허용 origin. 환경변수는 콤마 구분 문자열(예: "https://a,https://b"),
     # 코드에서는 변경 불가 튜플로 노출. 기본은 로컬 dev, prod에선 Vercel URL을 콤마로 이어 붙인다.
-    frontend_origins: tuple[str, ...] = Field(
+    # NoDecode: pydantic-settings의 list/tuple env 자동 JSON 파싱을 끄고 raw 문자열을
+    # 그대로 validator로 흘려보낸다 (URL은 JSON으로 invalid해서 파싱이 깨졌던 케이스).
+    frontend_origins: Annotated[tuple[str, ...], NoDecode] = Field(
         default=("http://localhost:3000", "http://127.0.0.1:3000"),
         validation_alias="VIDOCTOR_FRONTEND_ORIGINS",
     )
@@ -51,8 +54,6 @@ class Settings(BaseSettings):
     @field_validator("frontend_origins", mode="before")
     @classmethod
     def _split_origins(cls, raw: object) -> object:
-        # pydantic-settings는 list/tuple env를 JSON 파싱하려 하지만, 사람이 채우는
-        # secrets는 콤마 구분이 더 자연스럽다.
         if isinstance(raw, str):
             return tuple(o.strip() for o in raw.split(",") if o.strip())
         return raw
