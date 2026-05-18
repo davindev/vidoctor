@@ -191,6 +191,19 @@ def insert_analysis(video_id: str) -> str:
     return _first_row(res)["id"]
 
 
+def count_analyses_today() -> int:
+    """오늘(UTC) 시작된 분석 수. 일일 글로벌 한도 체크용."""
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    res = (
+        _client()
+        .table("analyses")
+        .select("id", count="exact")
+        .gte("started_at", today_start.isoformat())
+        .execute()
+    )
+    return res.count or 0
+
+
 def finalize_analysis(
     analysis_id: str,
     *,

@@ -26,6 +26,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "sse-starlette>=2.1.0",
     "yt-dlp>=2025.1.15",
+    "slowapi>=0.1.9",
     # 직접 import이라 명시 (whisperx/silero 등이 transitive로 끌고 오지만 declare가 안전).
     "numpy>=2.0.0",
     "torch>=2.0.0",

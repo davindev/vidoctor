@@ -14,10 +14,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
 from vidoctor.config import get_settings
@@ -32,6 +34,7 @@ from vidoctor.llm import LLMCallMetrics
 from vidoctor.log_setup import analysis_id_var, configure_logging
 from vidoctor.repository import (
     complete_analysis,
+    count_analyses_today,
     create_video_signed_url,
     delete_video_for_analysis,
     fail_analysis,
@@ -77,6 +80,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _client_ip(request: Request) -> str:
+    """클라이언트 IP 추출. Fly proxy는 `fly-client-ip` 헤더에 실제 IP를 박고,
+    일반 환경에서는 X-Forwarded-For 첫 항목을 사용. 둘 다 없으면 직접 연결 IP.
+    """
+    fly_ip = request.headers.get("fly-client-ip")
+    if fly_ip:
+        return fly_ip
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# IP 기반 rate limiter — slowapi가 RateLimitExceeded(429)로 자동 차단.
+limiter = Limiter(key_func=_client_ip)
+app.state.limiter = limiter
+# slowapi의 핸들러 시그니처가 FastAPI 타입과 정확히 일치하지 않아 type ignore 필요 —
+# 공식 README 권장 패턴 그대로.
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 @app.get("/healthz")
@@ -300,6 +324,21 @@ async def _analyze_stream(
     `_analysis_slot` 세마포어로 동시 분석 수를 제한 — 모델 메모리(~1-2GB × N)가 OOM
     유발하지 않도록. 큐가 꽉 차면 즉시 사용자에게 안내 메시지를 보내고 종료.
     """
+    # 전체 사용자 합산 일일 한도 — IP rate limit이 우회되어도 비용 절대 상한 역할.
+    today_count = await asyncio.to_thread(count_analyses_today)
+    quota = get_settings().daily_quota
+    if today_count >= quota:
+        yield _sse(
+            "error",
+            {
+                "message": (
+                    f"오늘 분석 한도({quota}건)에 도달했습니다. 내일 다시 시도해주세요."
+                ),
+                "analysis_id": None,
+            },
+        )
+        return
+
     # 슬롯이 모두 차 있으면 즉시 TimeoutError → SSE error 이벤트로 안내.
     try:
         async with asyncio.timeout(0):
@@ -462,12 +501,17 @@ async def _analyze_stream(
 
 
 @app.post("/api/analyze")
+@limiter.limit("3/hour;10/day")
 async def analyze(
+    request: Request,
     category: str = Form(...),
     file: UploadFile | None = File(default=None),
     url: str | None = Form(default=None),
 ) -> StreamingResponse:
-    """영상 업로드 또는 YouTube URL을 받아 분석을 시작한다 (SSE 진행 스트림)."""
+    """영상 업로드 또는 YouTube URL을 받아 분석을 시작한다 (SSE 진행 스트림).
+
+    rate limit은 IP당 시간 3건·일 10건. 한도 초과 시 slowapi가 429로 자동 응답.
+    """
     # "auto"는 분류기 위임. 그 외에는 CATEGORY_DIMENSIONS 멤버여야 graph 분기가 안전.
     if category != "auto" and category not in CATEGORY_DIMENSIONS:
         raise HTTPException(status_code=400, detail=f"알 수 없는 카테고리: {category}")
