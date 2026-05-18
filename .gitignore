@@ -43,3 +43,4 @@ build/
 # MLflow local
 mlruns/
 mlflow.db
+.vercel
