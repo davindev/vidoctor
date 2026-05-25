@@ -136,11 +136,66 @@ export interface VideoUrlResponse {
  * 동일 origin 배포에선 미설정 → 빈 문자열로 떨어져 relative path가 그대로 동작. */
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
-/** HTTP 응답이 실패면 body까지 포함한 Error 던지기. fetch 호출자가 공유. */
+const RATE_LIMIT_FALLBACK =
+  "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.";
+
+const UNIT_KO: Record<string, string> = {
+  second: "초",
+  minute: "분",
+  hour: "시간",
+  day: "일",
+};
+
+/** slowapi 본문의 "N per M unit" 패턴(예: "3 per 1 hour", "5 per 10 minutes")을
+ * 한국어로 변환. multiplier가 1이면 생략("시간당"), 그 외엔 명시("10분당").
+ * 매칭 실패 시엔 영문 leak 방지를 위해 한글 fallback으로 떨어진다. */
+function formatRateLimit(raw: string): string {
+  const m = raw.match(/(\d+)\s*per\s*(\d+)?\s*(second|minute|hour|day)s?/i);
+  if (!m) return RATE_LIMIT_FALLBACK;
+  const [, count, multiplierRaw, unit] = m;
+  const multiplier = multiplierRaw ? Number(multiplierRaw) : 1;
+  const unitKo = UNIT_KO[unit.toLowerCase()] ?? unit;
+  const period = multiplier === 1 ? `${unitKo}당` : `${multiplier}${unitKo}당`;
+  return `요청 한도(${period} ${count}건)에 도달했습니다. 잠시 후 다시 시도해주세요.`;
+}
+
+/** 백엔드 응답 본문에서 표시용 메시지를 뽑아낸다.
+ * FastAPI `{detail}` / slowapi `{error}` 양쪽을 지원. */
+function extractDetail(body: string): string | null {
+  try {
+    const j = JSON.parse(body) as { detail?: unknown; error?: unknown };
+    if (typeof j.detail === "string") return j.detail;
+    if (typeof j.error === "string") return j.error;
+  } catch {
+    /* 본문이 JSON이 아니면 null로 폴백 */
+  }
+  return null;
+}
+
+/** HTTP 응답이 실패면 사용자 친화적 한국어 메시지로 Error 던지기. fetch 호출자가 공유.
+ * 원본 status·body는 console.error + Error.cause로 보존해 디버깅 컨텍스트를 잃지 않는다. */
 export async function assertOk(res: Response): Promise<void> {
   if (res.ok) return;
   const body = await res.text().catch(() => "");
-  throw new Error(`${res.status} ${res.statusText}: ${body}`);
+  const detail = extractDetail(body);
+
+  let message: string;
+  if (res.status === 429) {
+    message = detail ? formatRateLimit(detail) : RATE_LIMIT_FALLBACK;
+  } else if (res.status === 404) {
+    message = detail ?? "요청한 리소스를 찾을 수 없습니다.";
+  } else if (res.status === 413) {
+    message = detail ?? "파일 크기가 서버 허용 한도를 초과했습니다.";
+  } else if (res.status === 400) {
+    message = detail ?? "요청 형식이 올바르지 않습니다.";
+  } else if (res.status >= 500) {
+    message = detail ?? "서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+  } else {
+    message = detail ?? "요청을 처리하지 못했습니다.";
+  }
+
+  console.error(`[api] ${res.status} ${res.statusText} ${res.url}`, body);
+  throw new Error(message, { cause: { status: res.status, statusText: res.statusText, body } });
 }
 
 async function getJSON<T>(path: string): Promise<T> {
