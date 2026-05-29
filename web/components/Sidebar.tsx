@@ -4,12 +4,14 @@ import type { AnalysisListItem } from "@/lib/api";
 import { CATEGORY_LABEL } from "@/lib/api";
 import { basename, fmtRelative } from "@/lib/format";
 import { ErrorBanner } from "./ErrorBanner";
+import { Spinner } from "./Spinner";
 
 interface Props {
   items: AnalysisListItem[];
   selectedId: string | null;
   disabled: boolean;
   loadError: string | null;
+  loading: boolean;
   onSelect: (id: string) => void;
   onNewAnalysis: () => void;
 }
@@ -19,6 +21,7 @@ export function Sidebar({
   selectedId,
   disabled,
   loadError,
+  loading,
   onSelect,
   onNewAnalysis,
 }: Props) {
@@ -59,6 +62,10 @@ export function Sidebar({
       <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-3">
         {items.length === 0 && loadError ? (
           <ErrorBanner message={loadError} className="mx-1 mb-2 text-[12px]" />
+        ) : items.length === 0 && loading ? (
+          <div className="mt-3.5 flex justify-center py-5">
+            <Spinner size={18} />
+          </div>
         ) : items.length === 0 ? (
           <div className="mx-4 mt-3.5 mb-2 px-3 py-5 text-center">
             <div className="text-[13px] font-medium tracking-[-0.005em] text-ink-2">

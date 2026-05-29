@@ -33,6 +33,8 @@ type AppState =
 export default function Home() {
   const [items, setItems] = useState<AnalysisListItem[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // cold-start 재시도 동안 사이드바가 "기록 없음"으로 잘못 보이지 않도록 초기 로드를 추적.
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [state, setState] = useState<AppState>({ kind: "idle", lastError: null });
 
   const refreshHistory = useCallback(async () => {
@@ -45,6 +47,8 @@ export default function Home() {
       setHistoryError(
         e instanceof Error ? e.message : "이전 분석 목록을 불러오지 못했습니다.",
       );
+    } finally {
+      setHistoryLoading(false);
     }
   }, []);
 
@@ -173,6 +177,7 @@ export default function Home() {
         selectedId={selectedId}
         disabled={sidebarDisabled}
         loadError={historyError}
+        loading={historyLoading}
         onSelect={handleSelect}
         onNewAnalysis={handleNewAnalysis}
       />

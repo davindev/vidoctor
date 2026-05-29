@@ -18,6 +18,7 @@ import {
 import { basename, fmtHMS } from "@/lib/format";
 import { ErrorBanner } from "./ErrorBanner";
 import { ResultHeader, ResultPage } from "./ResultHeader";
+import { Spinner } from "./Spinner";
 
 interface Props {
   analysisId: string;
@@ -109,7 +110,9 @@ export function ResultView({ analysisId, onDeleted }: Props) {
   if (!detail) {
     return (
       <ResultPage>
-        <p className="text-ink-4">불러오는 중…</p>
+        <div className="flex justify-center py-20">
+          <Spinner size={24} />
+        </div>
       </ResultPage>
     );
   }

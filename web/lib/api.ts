@@ -198,10 +198,37 @@ export async function assertOk(res: Response): Promise<void> {
   throw new Error(message, { cause: { status: res.status, statusText: res.statusText, body } });
 }
 
+// Fly cold-start 구간엔 프록시가 CORS 헤더 없는 응답을 내 fetch가 실패하므로 재시도.
+const RETRY_DELAYS_MS = [600, 1500, 3000];
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** 4xx는 재시도해도 결과가 같아 제외, 네트워크 실패·5xx만 재시도. */
+function isRetriable(error: unknown): boolean {
+  if (
+    error instanceof Error &&
+    typeof error.cause === "object" &&
+    error.cause !== null &&
+    "status" in error.cause
+  ) {
+    return (error.cause as { status: number }).status >= 500;
+  }
+  // fetch 네트워크 실패는 cause 없는 TypeError.
+  return error instanceof TypeError;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  await assertOk(res);
-  return res.json() as Promise<T>;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`);
+      await assertOk(res);
+      return (await res.json()) as T;
+    } catch (error) {
+      if (attempt >= RETRY_DELAYS_MS.length || !isRetriable(error)) throw error;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 export async function fetchAnalyses(): Promise<AnalysisListItem[]> {
