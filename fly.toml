@@ -11,9 +11,11 @@ primary_region = 'nrt'
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'suspend'
-  auto_start_machines = true
-  # cold start 제거 — 채용 데모 시 첫 방문도 즉시 응답하도록 1대 항상 가동.
+  # suspend 시 다시 깨어날 때 6분 warm-up이 503 유발 → 'off'로 영구 가동.
+  # 채용 데모 안정성 우선, 트래픽 폭주 시 동시 분석 한도(2)로 자연 backpressure.
+  auto_stop_machines = 'off'
+  # 한 대만 운영. 두 대 동시 startup 시 health check 충돌로 503 발생하던 문제 회피.
+  auto_start_machines = false
   min_machines_running = 1
   processes = ['app']
 
