@@ -30,6 +30,9 @@ dependencies = [
     # 직접 import이라 명시 (whisperx/silero 등이 transitive로 끌고 오지만 declare가 안전).
     "numpy>=2.0.0",
     "torch>=2.0.0",
+    # torchvision은 직접 쓰진 않지만 transformers가 lazy import — torch CPU wheel과 ABI를
+    # 맞추기 위해 명시(transitive로는 [tool.uv.sources]의 CPU index override가 적용 안 됨).
+    "torchvision>=0.20.0",
 ]
 
 [dependency-groups]
@@ -92,5 +95,11 @@ explicit = true
 
 [tool.uv.sources]
 torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+# torchvision은 transformers transitive로 들어오는데, torch CPU wheel과 ABI 호환을
+# 맞추려면 같은 CPU index에서 가져와야 한다. PyPI 기본은 CUDA 빌드라 `torchvision::nms`
+# 같은 operator가 CPU torch와 매칭되지 않아 import 실패.
+torchvision = [
     { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
 ]
