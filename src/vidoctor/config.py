@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # 전체 사용자 합산 일일 분석 한도. IP rate limit이 우회되어도 OpenAI 비용
     # 폭증을 막는 절대 상한 역할.
-    daily_quota: int = Field(default=50, validation_alias="VIDOCTOR_DAILY_QUOTA")
+    daily_quota: int = Field(default=100, validation_alias="VIDOCTOR_DAILY_QUOTA")
 
 
 @lru_cache(maxsize=1)

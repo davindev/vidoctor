@@ -501,7 +501,7 @@ async def _analyze_stream(
 
 
 @app.post("/api/analyze")
-@limiter.limit("3/hour;10/day")
+@limiter.limit("5/hour;15/day")
 async def analyze(
     request: Request,
     category: str = Form(...),
@@ -510,7 +510,7 @@ async def analyze(
 ) -> StreamingResponse:
     """영상 업로드 또는 YouTube URL을 받아 분석을 시작한다 (SSE 진행 스트림).
 
-    rate limit은 IP당 시간 3건·일 10건. 한도 초과 시 slowapi가 429로 자동 응답.
+    rate limit은 IP당 시간 5건·일 15건. 한도 초과 시 slowapi가 429로 자동 응답.
     """
     # "auto"는 분류기 위임. 그 외에는 CATEGORY_DIMENSIONS 멤버여야 graph 분기가 안전.
     if category != "auto" and category not in CATEGORY_DIMENSIONS:
