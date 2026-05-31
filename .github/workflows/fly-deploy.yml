@@ -12,6 +12,24 @@ jobs:
     concurrency: deploy-group    # optional: ensure only one action runs at a time
     steps:
       - uses: actions/checkout@v4
+
+      # KsponSpeech fine-tuned Whisper 모델(1.5GB)은 git에 포함되지 않아 R2에서 다운로드.
+      # Dockerfile의 `COPY models ./models`가 이 디렉토리를 컨테이너에 박는다.
+      - name: Download KsponSpeech model from R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          mkdir -p models/whisper-ko-ksponspeech-ct2
+          aws s3 cp \
+            s3://$R2_BUCKET/models/whisper-ko-ksponspeech-ct2/ \
+            models/whisper-ko-ksponspeech-ct2/ \
+            --recursive \
+            --endpoint-url "$R2_ENDPOINT"
+
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:
