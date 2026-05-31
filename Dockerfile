@@ -41,8 +41,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   libsndfile1         — librosa
 #   libgl1, libglib2.0-0 — opencv 헤드리스 런타임
 #   libgomp1            — torch OpenMP
+#   libegl1, libgles2   — mediapipe BlazeFace/FaceLandmarker OpenGL ES 의존
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg libsndfile1 libgl1 libglib2.0-0 libgomp1 \
+    ffmpeg libsndfile1 libgl1 libglib2.0-0 libgomp1 libegl1 libgles2 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
