@@ -65,9 +65,20 @@ _analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """프로세스 시작 시 JSON 로거 1회 구성. import side-effect로 두면 pytest caplog와
-    충돌하므로 lifespan에서 명시적 호출."""
+    """프로세스 시작 시 JSON 로거 1회 구성 + WhisperX 모델 사전 로드.
+
+    import side-effect로 두면 pytest caplog와 충돌하므로 lifespan에서 명시적 호출.
+    모델 warm-up은 첫 분석 요청의 cold start(1.5GB 모델 로드 30~60초)를 제거.
+    실패해도 lazy load로 fallback되므로 서버 부팅은 막지 않는다.
+    """
     configure_logging()
+    try:
+        from vidoctor.audio.transcribe import _load_models
+        _log.info("WhisperX 모델 사전 로드 시작")
+        await asyncio.to_thread(_load_models)
+        _log.info("WhisperX 모델 사전 로드 완료")
+    except Exception:
+        _log.exception("WhisperX 모델 사전 로드 실패 — 첫 요청 시 lazy load로 fallback")
     yield
 
 
@@ -444,7 +455,14 @@ async def _analyze_stream(
             # 전체 분석 hard cap (상단 _ANALYSIS_TIMEOUT_SEC 정의 참고).
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
                 while True:
-                    item = await node_queue.get()
+                    # 노드 완료를 기다리되 15초 안에 신호가 없으면 SSE keep-alive 주석을
+                    # 보내 Fly proxy·브라우저의 idle 끊김을 방지. 모델 로딩·긴 노드 처리
+                    # 동안 클라이언트 연결이 유지된다.
+                    try:
+                        item = await asyncio.wait_for(node_queue.get(), timeout=15.0)
+                    except TimeoutError:
+                        yield ": keep-alive\n\n"
+                        continue
                     if item is sentinel:
                         break
                     event_name, payload = item
