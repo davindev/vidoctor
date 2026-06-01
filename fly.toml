@@ -33,6 +33,8 @@ primary_region = 'nrt'
     path = '/healthz'
 
 [[vm]]
-  # 2x(4GB)는 WhisperX 1.5GB + wav2vec2 1GB + 분석 중간 데이터로 OOM 발생 →
-  # 4x(8GB)로 안정성 확보. 채용 데모 비용($30 → $60/월) 대비 ROI 명확.
-  size = 'performance-4x'
+  # 4x(8GB)에서도 단일 분석 transcribe 단계에서 anon-rss 7.7GB까지 도달해 OOM 발생.
+  # WhisperX + wav2vec2 사전 로드된 base memory 위에 ctranslate2/numpy buffer가 spike.
+  # 8x(16GB)로 메모리 헤드룸 2배 확보 + vCPU 2배로 분석 속도 부수 효과.
+  # 비용 $60 → $120/월, 채용 데모 안정성 우선.
+  size = 'performance-8x'
