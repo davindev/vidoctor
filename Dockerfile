@@ -56,6 +56,28 @@ COPY --chown=app:app src ./src
 # 빌드 시점에 박아 cold start 시 외부 다운로드 의존을 없앤다.
 COPY --chown=app:app models ./models
 
+# 모델 캐시를 컨테이너 이미지에 통합 — worker subprocess가 매번 시작할 때 Pyannote
+# 다운로드·Lightning checkpoint v1→v2 migration·ctranslate2 초기화를 다시 하지 않게.
+# 더미 secrets는 Pydantic Settings 검증 통과용 (모델 로딩은 외부 API 호출 안 함).
+ENV HF_HOME=/app/.cache/huggingface \
+    XDG_CACHE_HOME=/app/.cache \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
+    HOME=/app
+RUN mkdir -p /app/.cache && \
+    OPENAI_API_KEY=build-dummy \
+    SUPABASE_URL=https://dummy.supabase.co \
+    SUPABASE_SERVICE_KEY=build-dummy \
+    R2_ENDPOINT=https://dummy.r2.com \
+    R2_ACCESS_KEY_ID=build-dummy \
+    R2_SECRET_ACCESS_KEY=build-dummy \
+    R2_BUCKET=build-dummy \
+    LANGFUSE_PUBLIC_KEY=build-dummy \
+    LANGFUSE_SECRET_KEY=build-dummy \
+    LANGFUSE_HOST=https://dummy.langfuse.com \
+    VIDOCTOR_WHISPER_MODEL=/app/models/whisper-ko-ksponspeech-ct2 \
+    /app/.venv/bin/python -c "from vidoctor.audio.transcribe import _load_models; _load_models()" && \
+    chown -R app:app /app/.cache /app/models
+
 USER app
 
 EXPOSE 8000
