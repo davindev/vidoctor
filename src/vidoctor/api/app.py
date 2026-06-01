@@ -523,7 +523,7 @@ async def _analyze_stream(
 
 
 @app.post("/api/analyze")
-@limiter.limit("5/hour;15/day")
+@limiter.limit("100/hour;500/day")  # TEMP 디버깅용: 원래는 "5/hour;15/day"
 async def analyze(
     request: Request,
     category: str = Form(...),
