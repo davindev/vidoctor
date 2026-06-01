@@ -33,4 +33,6 @@ primary_region = 'nrt'
     path = '/healthz'
 
 [[vm]]
-  size = 'performance-2x'
+  # 2x(4GB)는 WhisperX 1.5GB + wav2vec2 1GB + 분석 중간 데이터로 OOM 발생 →
+  # 4x(8GB)로 안정성 확보. 채용 데모 비용($30 → $60/월) 대비 ROI 명확.
+  size = 'performance-4x'
