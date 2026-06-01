@@ -455,13 +455,14 @@ async def _analyze_stream(
             # 전체 분석 hard cap (상단 _ANALYSIS_TIMEOUT_SEC 정의 참고).
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
                 while True:
-                    # 노드 완료를 기다리되 15초 안에 신호가 없으면 SSE keep-alive 주석을
-                    # 보내 Fly proxy·브라우저의 idle 끊김을 방지. 모델 로딩·긴 노드 처리
-                    # 동안 클라이언트 연결이 유지된다.
+                    # 노드 완료를 기다리되 15초 안에 신호가 없으면 SSE ping 이벤트로
+                    # heartbeat. 표준 SSE comment(`: keep-alive`)는 일부 프록시가 의미
+                    # 없는 데이터로 보고 버퍼링/제거할 수 있어, 진짜 event로 보내 forward
+                    # 보장. 클라이언트는 page.tsx switch의 default로 무시.
                     try:
                         item = await asyncio.wait_for(node_queue.get(), timeout=15.0)
                     except TimeoutError:
-                        yield ": keep-alive\n\n"
+                        yield _sse("ping", {})
                         continue
                     if item is sentinel:
                         break
