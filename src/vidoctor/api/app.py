@@ -56,10 +56,12 @@ _log = logging.getLogger(__name__)
 # 15분이면 hang 케이스만 끊고 정상은 통과.
 _ANALYSIS_TIMEOUT_SEC = 15 * 60
 
-# 동시 진행 분석 cap. WhisperX·MediaPipe 모델 각 ~1-2GB RAM이라 무제한 동시는 OOM 위험.
-# 시연 환경 단일 인스턴스 기준 2개. 한도 초과 시 SSE 채널을 연 뒤 첫 이벤트로 error를 보낸다
-# (클라이언트가 EventSource 한 가지 핸들러로만 처리하도록 응답 코드 분기를 피함).
-_MAX_CONCURRENT_ANALYSES = 2
+# 동시 진행 분석 cap. 1건 분석이 WhisperX(1.5GB) + wav2vec2(~1GB) + MediaPipe + 영상 frame
+# 버퍼 + GPT-4o Vision 이미지 합쳐 ~4-5GB 사용. 8GB 머신(performance-4x)에서 2건 동시 진행
+# 시 Python GC 지연으로 메모리 누적 → OOM kill → 머신 reboot → 1~2분 다운타임 발생 기록.
+# 1건으로 제한해 OOM 근본 차단. 한도 초과 시 SSE 첫 이벤트로 error를 보낸다 (클라이언트가
+# EventSource 한 가지 핸들러로만 처리하도록 응답 코드 분기를 피함).
+_MAX_CONCURRENT_ANALYSES = 1
 _analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
 
 
@@ -351,6 +353,8 @@ async def _analyze_stream(
         return
 
     # 슬롯이 모두 차 있으면 즉시 TimeoutError → SSE error 이벤트로 안내.
+    # 내부 동시성 수치(현재 1건)를 그대로 노출하면 사용자가 황당해하므로 일반화된
+    # "다른 분석이 진행 중" 문구로.
     try:
         async with asyncio.timeout(0):
             await _analysis_slot.acquire()
@@ -359,8 +363,7 @@ async def _analyze_stream(
             "error",
             {
                 "message": (
-                    f"동시 분석 {_MAX_CONCURRENT_ANALYSES}건 한도에 도달했습니다. "
-                    "잠시 후 다시 시도해주세요."
+                    "현재 다른 분석이 진행 중입니다. 잠시 후 다시 시도해주세요."
                 ),
                 "analysis_id": None,
             },

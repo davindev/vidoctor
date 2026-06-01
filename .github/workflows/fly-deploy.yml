@@ -5,6 +5,16 @@ on:
   push:
     branches:
       - main
+    # 백엔드/인프라 변경 시에만 Fly 재배포. web/ 등 프론트 전용 변경은 Vercel 자동 배포만
+    # 일으키고 Fly 머신은 건드리지 않아 1~2분 warm-up 다운타임을 회피.
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'Dockerfile'
+      - 'fly.toml'
+      - '.github/workflows/fly-deploy.yml'
 jobs:
   deploy:
     name: Deploy app
