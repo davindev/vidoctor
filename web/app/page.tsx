@@ -140,8 +140,14 @@ export default function Home() {
         },
       });
     } catch (e) {
-      status.exit = "error";
-      thrownError = e instanceof Error ? e.message : String(e);
+      // complete 이벤트를 이미 받은 후의 throw는 무시. 백엔드가 정상 종료해도 Fly
+      // proxy/네트워크 layer가 connection close를 RST/incomplete-chunk로 클라이언트에
+      // 전달해 reader.read()가 throw하는 케이스가 있음. 결과 페이지 전환은 complete
+      // 핸들러에서 이미 처리됐으므로 throw를 error로 승격시키지 않는다.
+      if (status.exit !== "complete") {
+        status.exit = "error";
+        thrownError = e instanceof Error ? e.message : String(e);
+      }
     }
 
     if (status.exit === "complete") {
@@ -151,6 +157,10 @@ export default function Home() {
     // 에러 또는 unexpected stream close — 사용자가 메시지를 읽을 수 있도록 idle로
     // 복귀하되 lastError를 들고 가서 IdleForm 상단에 배너로 노출.
     setState((prev) => {
+      // complete 이벤트로 이미 result로 전환된 상태면 idle 복귀 금지. 위 catch 가드와
+      // 별개의 안전망 — onEvent 안에서 setState가 큐잉되는 동안 catch가 먼저 도달하는
+      // race를 막는다.
+      if (prev.kind === "result") return prev;
       const inflightError = prev.kind === "analyzing" ? prev.errorMessage : null;
       const msg =
         thrownError ??
