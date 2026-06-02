@@ -83,7 +83,9 @@ def detect_filler_events(
             FillerEvent(
                 start=words[i].start,
                 end=words[run_end - 1].end,
-                text=" ".join(w.text for w in words[i:run_end]),
+                text=", ".join(
+                    filter(None, (normalize_word(w.text) for w in words[i:run_end]))
+                ),
             )
         )
         i = run_end
@@ -105,7 +107,7 @@ def _merge_burst(events: list[FillerEvent], gap: float) -> list[FillerEvent]:
             merged[-1] = FillerEvent(
                 start=head.start,
                 end=ev.end,
-                text=f"{head.text} {ev.text}",
+                text=f"{head.text}, {ev.text}",
             )
         else:
             merged.append(ev)
