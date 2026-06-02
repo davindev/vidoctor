@@ -101,7 +101,6 @@ async def analyze_video(
         {"event": "error", "message": "사용자 노출 가능한 메시지"}
     """
     import asyncio
-    import dataclasses
     import tempfile
     from pathlib import Path
 

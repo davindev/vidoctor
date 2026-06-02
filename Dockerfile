@@ -8,8 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
-# build-essential: 일부 의존성(silero-vad·whisperx transitive)이 native 컴파일을 요구.
-# curl·ca-certificates는 uv를 COPY --from으로 받아 불필요.
+# 일부 transitive(grpcio 등)가 sdist 폴백 시 native 컴파일을 요구. 안전 마진.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -46,7 +45,6 @@ RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv ./.venv
-COPY --chown=app:app src ./src
 
 USER app
 

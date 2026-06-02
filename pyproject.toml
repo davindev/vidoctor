@@ -25,6 +25,9 @@ dependencies = [
     # LLM·관측 — fly의 category_classifier가 GPT-4o 호출
     "openai>=1.50.0",
     "langchain-openai>=0.2.0",
+    # langfuse.langchain 서브모듈이 langchain 메인 패키지를 require하고, vidoctor.llm이
+    # module-level에서 CallbackHandler import — 누락 시 fly main startup이 ImportError로 실패.
+    "langchain>=0.3.0",
     "langfuse>=2.50.0",
     # vidoctor.graph __init__ chain이 langgraph import. fly는 graph 실행 안 하지만
     # `from vidoctor.graph import Category` 등 import 자체는 발생.

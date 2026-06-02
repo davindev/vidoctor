@@ -60,7 +60,7 @@ from vidoctor.vision.category_classifier import classify_category
 
 _log = logging.getLogger(__name__)
 
-# worker 모델 로드(30~60초) + 분석(~5분) 여유분. hang 케이스만 끊고 정상은 통과.
+# Modal 컨테이너 콜드 스타트(~1~2분) + 분석(~5분) 여유분. hang 케이스만 끊고 정상은 통과.
 _ANALYSIS_TIMEOUT_SEC = 15 * 60
 
 # Modal이 분석 자체는 자동 스케일하지만 main의 R2 업로드·DB I/O 경합 방지 위해 5로 제한.
@@ -74,7 +74,7 @@ _modal_analyze = modal.Function.from_name("vidoctor-analyze", "analyze_video")
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # 분석은 worker subprocess가 자체 로딩하므로 main에서 사전 로드 불필요.
+    # 분석은 Modal 컨테이너가 자체 로딩하므로 main에서 사전 로드 불필요.
     configure_logging()
     yield
 
@@ -313,7 +313,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 def _deserialize_state(
     state_dict: dict[str, Any], video_path: str, category: Category
 ) -> AnalysisState:
-    # worker._serialize_state와 대칭. complete_analysis가 model_dump를 호출하므로
+    # vidoctor_modal._serialize_state와 대칭. complete_analysis가 model_dump를 호출하므로
     # 받은 dict를 Pydantic·dataclass 객체로 복원해야 함.
     return cast(
         AnalysisState,
@@ -358,7 +358,7 @@ async def _analyze_stream(
     url: str | None,
     category: Category | Literal["auto"],
 ) -> AsyncIterator[str]:
-    """영상 입력 → R2 업로드 → worker subprocess 분석 → DB 저장. 진행은 SSE로 stream."""
+    """영상 입력 → R2 업로드 → Modal 분석 위임 → DB 저장. 진행은 SSE로 stream."""
     # 전체 사용자 합산 일일 한도 — IP rate limit이 우회되어도 비용 절대 상한 역할.
     today_count = await asyncio.to_thread(count_analyses_today)
     quota = get_settings().daily_quota
@@ -463,7 +463,7 @@ async def _analyze_stream(
 
         consume_task = asyncio.create_task(_consume_modal())
         final_state_dict: dict[str, Any] | None = None
-        worker_error: str | None = None
+        modal_error: str | None = None
 
         try:
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
@@ -486,7 +486,7 @@ async def _analyze_stream(
                     elif event_type == "complete":
                         final_state_dict = payload["state"]
                     elif event_type == "error":
-                        worker_error = (
+                        modal_error = (
                             payload.get("message") or "분석 중 오류가 발생했습니다."
                         )
                     else:
@@ -497,8 +497,8 @@ async def _analyze_stream(
                 with suppress(Exception, asyncio.CancelledError, TimeoutError):
                     await asyncio.wait_for(consume_task, 5.0)
 
-        if worker_error is not None:
-            raise SafeError(worker_error)
+        if modal_error is not None:
+            raise SafeError(modal_error)
         if final_state_dict is None:
             _log.error("Modal complete 이벤트 누락")
             raise SafeError("분석 중 오류가 발생했습니다.")
