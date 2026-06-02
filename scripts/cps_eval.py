@@ -65,7 +65,11 @@ def _load_or_extract_pitch(
         d = np.load(cache)
         return d["f0"], d["times"]
     _log.info("F0 추출 중: %s", video_path.name)
-    f0, times = extract_pitch_track(str(video_path))
+    # librosa.load(mp4)의 audioread fallback 회피용 — ffmpeg 직접 호출.
+    import whisperx
+
+    audio = whisperx.load_audio(str(video_path))
+    f0, times = extract_pitch_track(audio)
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.savez(cache, f0=f0, times=times)
     _log.info("  → %d 프레임 (캐시 저장: %s)", len(f0), cache.name)

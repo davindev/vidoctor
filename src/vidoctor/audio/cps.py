@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Literal
 
+import numpy as np
+
 from vidoctor.audio.filler import FILLERS, normalize_word
 from vidoctor.audio.pitch import WindowPitch
 from vidoctor.graph.state import CPSEvent, Word
@@ -237,18 +239,19 @@ def detect_cps_anomalies(
     return _merge_adjacent(raw)
 
 
-def detect_cps_with_audio(words: list[Word], audio_path: str) -> list[CPSEvent]:
-    """오디오 path 받아 F0 추출 + multi-feature detector 일괄 처리.
+def detect_cps_with_audio(words: list[Word], audio_16k: np.ndarray) -> list[CPSEvent]:
+    """16kHz mono PCM 신호로 F0 추출 + multi-feature detector 일괄 처리.
 
-    호출자가 윈도우 정의·F0 추출·detector 호출 정합을 직접 챙기지 않게 캡슐화 —
-    `sliding_windows`를 cross-module로 노출하지 않고 한 함수가 책임진다.
+    transcribe 노드가 디코딩한 audio_16k를 재사용 — librosa.load의 mp4 fallback
+    (audioread+ffmpeg) 비용 회피. 호출자가 윈도우 정의·F0 추출·detector 호출
+    정합을 직접 챙기지 않게 한 함수가 책임진다.
     """
     from vidoctor.audio.pitch import extract_pitch_track, window_pitch_features
 
     windows = sliding_windows(words)
     if not windows:
         return []
-    f0, times = extract_pitch_track(audio_path)
+    f0, times = extract_pitch_track(audio_16k)
     pitch_features = window_pitch_features(
         f0, times, [(w.start, w.end) for w in windows]
     )

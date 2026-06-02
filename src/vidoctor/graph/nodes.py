@@ -36,6 +36,8 @@ async def detect_cps(state: AnalysisState) -> dict:
 
     vlog는 배경 노이즈로 ASR이 오염되므로 F0(메인 화자 voiced 톤) 결합으로 노이즈 cut
     — F1 0.533 → 0.667. lecture는 노이즈 적고 톤 단조로워 F0 결합 시 오히려 라벨 cut.
+    F0 추출은 transcribe가 디코딩한 audio_16k 재사용 — librosa.load의 mp4 fallback
+    (audioread+ffmpeg) 비용 회피.
     """
     from vidoctor.audio.cps import detect_cps_anomalies, detect_cps_with_audio
 
@@ -43,9 +45,11 @@ async def detect_cps(state: AnalysisState) -> dict:
     if state["category"] != "vlog":
         return {"cps_anomalies": detect_cps_anomalies(transcript)}
 
-    events = await asyncio.to_thread(
-        detect_cps_with_audio, transcript, state["video_path"]
-    )
+    audio = state.get("audio_16k")
+    if audio is None:
+        # transcribe가 audio_16k를 채우지 못한 invariant 위반 — F0 없는 단독 detector로 폴백.
+        return {"cps_anomalies": detect_cps_anomalies(transcript)}
+    events = await asyncio.to_thread(detect_cps_with_audio, transcript, audio)
     return {"cps_anomalies": events}
 
 

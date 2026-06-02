@@ -41,14 +41,19 @@ class WindowPitch:
     f0_range: float
 
 
-def extract_pitch_track(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """오디오 파일에서 pYIN으로 F0 시계열 추출. (f0, times) 반환.
+def extract_pitch_track(audio: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """16kHz mono PCM 신호에서 pYIN으로 F0 시계열 추출. (f0, times) 반환.
 
-    f0는 unvoiced 프레임에서 NaN. 호출자가 voiced만 골라 윈도우 통계 계산.
+    transcribe 노드가 이미 디코딩한 audio_16k를 재사용해 librosa.load의 audioread
+    fallback(ffmpeg subprocess) 비용을 회피한다. f0는 unvoiced 프레임에서 NaN —
+    호출자가 voiced만 골라 윈도우 통계 계산.
     """
-    y, _ = librosa.load(audio_path, sr=F0_SAMPLE_RATE, mono=True)
+    # 프레임 단위 STFT 기반이라 frame_length 미만 입력은 ValueError. 빈 트랙으로 폴백 —
+    # window_pitch_features가 voiced 표본 부족으로 None 반환 → cps 단독 detector에 위임.
+    if audio.size < F0_FRAME_LENGTH:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
     f0, _, _ = librosa.pyin(
-        y,
+        audio,
         fmin=F0_MIN_HZ,
         fmax=F0_MAX_HZ,
         sr=F0_SAMPLE_RATE,
