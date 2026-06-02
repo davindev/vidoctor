@@ -1,4 +1,6 @@
-# models/ 는 포함하는것이 의도이므로 명시적으로 제외 항목에 두지 않는다.
+# 분석은 Modal로 위임 — fly main 이미지에 ML 모델 제외.
+models/
+vidoctor_modal.py
 
 # 버전 관리·CI
 .git
@@ -8,12 +10,14 @@
 # 프론트엔드 (Vercel 별도 배포)
 web/
 
-# 평가·골든셋 데이터·MLflow 결과
+# 평가·골든셋 데이터·MLflow 결과·로컬 작업 파일
 data/
 mlruns/
 scripts/
 tests/
 docs/
+supabase/
+.vercel/
 
 # Python 캐시·빌드 산출물
 **/__pycache__

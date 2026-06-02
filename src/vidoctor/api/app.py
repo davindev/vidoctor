@@ -8,13 +8,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
 
+import modal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -63,10 +63,13 @@ _log = logging.getLogger(__name__)
 # worker 모델 로드(30~60초) + 분석(~5분) 여유분. hang 케이스만 끊고 정상은 통과.
 _ANALYSIS_TIMEOUT_SEC = 15 * 60
 
-# worker subprocess가 메모리 격리하지만 단일 머신 CPU·디스크 IO 경합 방지 위해 1로 제한.
+# Modal이 분석 자체는 자동 스케일하지만 main의 R2 업로드·DB I/O 경합 방지 위해 5로 제한.
 # 한도 초과 시 EventSource 단일 핸들러 일관성 위해 HTTP 상태 분기 대신 SSE error 이벤트로.
-_MAX_CONCURRENT_ANALYSES = 1
+_MAX_CONCURRENT_ANALYSES = 5
 _analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
+
+# Modal에 배포된 분석 함수 — vidoctor_modal.py의 analyze_video.
+_modal_analyze = modal.Function.from_name("vidoctor-analyze", "analyze_video")
 
 
 @asynccontextmanager
@@ -443,74 +446,61 @@ async def _analyze_stream(
         yield _sse("started", {"analysis_id": analysis_id})
         yield _sse("uploaded", {})
 
-        # subprocess 격리: 종료 시 OS가 모델·native heap을 회수해 누적 OOM 차단.
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "vidoctor.worker",
-            "--video-path",
-            str(tmp_path),
-            "--category",
-            category,
-            "--analysis-id",
-            analysis_id,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        if proc.stdout is None:
-            raise RuntimeError("subprocess stdout PIPE 연결 실패")
-        worker_stdout = proc.stdout
+        # Modal에 분석 위임. 컨테이너 격리 + auto-scale로 동시 N건 처리.
+        # generator 소비를 별도 task로 두고 main은 15초마다 ping을 발송해 fetch idle 끊김 회피.
+        modal_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
+        async def _consume_modal() -> None:
+            try:
+                async for event in _modal_analyze.remote_gen.aio(  # type: ignore[attr-defined]
+                    storage_path, category, analysis_id
+                ):
+                    await modal_queue.put(("event", event))
+            except Exception as exc:  # noqa: BLE001
+                await modal_queue.put(("exception", exc))
+            finally:
+                await modal_queue.put(("done", None))
+
+        consume_task = asyncio.create_task(_consume_modal())
         final_state_dict: dict[str, Any] | None = None
         worker_error: str | None = None
 
         try:
             async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
                 while True:
-                    # 15s 무신호 시 ping. Fly proxy·브라우저 idle 끊김 회피.
                     try:
-                        line = await asyncio.wait_for(
-                            worker_stdout.readline(), timeout=15.0
+                        kind, payload = await asyncio.wait_for(
+                            modal_queue.get(), timeout=15.0
                         )
                     except TimeoutError:
                         yield _sse("ping", {})
                         continue
-                    if not line:
+                    if kind == "done":
                         break
-                    try:
-                        worker_event = json.loads(line)
-                    except json.JSONDecodeError:
-                        _log.warning(
-                            "워커 stdout JSON 파싱 실패",
-                            extra={"raw": line.decode(errors="replace")[:200]},
-                        )
-                        continue
-                    event_type = worker_event.get("event")
+                    if kind == "exception":
+                        raise payload
+                    event_type = payload.get("event")
                     if event_type == "node":
-                        _log.info("graph 노드 완료", extra={"node": worker_event["name"]})
-                        yield _sse("node", {"name": worker_event["name"]})
+                        _log.info("graph 노드 완료", extra={"node": payload["name"]})
+                        yield _sse("node", {"name": payload["name"]})
                     elif event_type == "complete":
-                        final_state_dict = worker_event["state"]
+                        final_state_dict = payload["state"]
                     elif event_type == "error":
                         worker_error = (
-                            worker_event.get("message") or "분석 중 오류가 발생했습니다."
+                            payload.get("message") or "분석 중 오류가 발생했습니다."
                         )
                     else:
-                        _log.warning("알 수 없는 워커 이벤트", extra={"event": event_type})
-                await proc.wait()
+                        _log.warning("알 수 없는 Modal 이벤트", extra={"event": event_type})
         finally:
-            if proc.returncode is None:
-                proc.kill()
+            if not consume_task.done():
+                consume_task.cancel()
                 with suppress(Exception, asyncio.CancelledError, TimeoutError):
-                    await asyncio.wait_for(proc.wait(), 5.0)
+                    await asyncio.wait_for(consume_task, 5.0)
 
-        # SafeError로 변환해 아래 일반 except 핸들러로 합류.
         if worker_error is not None:
             raise SafeError(worker_error)
-        if proc.returncode != 0 or final_state_dict is None:
-            _log.error(
-                "분석 워커 비정상 종료",
-                extra={"returncode": proc.returncode, "had_state": final_state_dict is not None},
-            )
+        if final_state_dict is None:
+            _log.error("Modal complete 이벤트 누락")
             raise SafeError("분석 중 오류가 발생했습니다.")
         graph_state = _deserialize_state(final_state_dict, str(tmp_path), category)
 
@@ -557,7 +547,7 @@ async def _analyze_stream(
 
 
 @app.post("/api/analyze")
-@limiter.limit("100/hour;500/day")  # TEMP 디버깅용: 원래는 "5/hour;15/day"
+@limiter.limit("5/hour;15/day")
 async def analyze(
     request: Request,
     category: str = Form(...),

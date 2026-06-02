@@ -11,30 +11,24 @@ primary_region = 'nrt'
 [http_service]
   internal_port = 8000
   force_https = true
-  # suspend 시 다시 깨어날 때 6분 warm-up이 503 유발 → 'off'로 영구 가동.
-  # 채용 데모 안정성 우선, 트래픽 폭주 시 동시 분석 한도(2)로 자연 backpressure.
+  # 데모 안정성: suspend resume 6분이 503 유발해 'off'로 영구 가동.
   auto_stop_machines = 'off'
-  # 한 대만 운영. 두 대 동시 startup 시 health check 충돌로 503 발생하던 문제 회피.
   auto_start_machines = false
   min_machines_running = 1
   processes = ['app']
 
   [http_service.concurrency]
     type = 'requests'
-    hard_limit = 20
-    soft_limit = 10
+    hard_limit = 50
+    soft_limit = 25
 
   [[http_service.checks]]
     interval = '30s'
     timeout = '2s'
-    # 컨테이너 시작 시 WhisperX 모델(1.5GB) 사전 로드에 1~2분 소요되어 grace_period 확장.
-    grace_period = '3m0s'
+    grace_period = '30s'
     method = 'GET'
     path = '/healthz'
 
 [[vm]]
-  # 4x(8GB)에서도 단일 분석 transcribe 단계에서 anon-rss 7.7GB까지 도달해 OOM 발생.
-  # WhisperX + wav2vec2 사전 로드된 base memory 위에 ctranslate2/numpy buffer가 spike.
-  # 8x(16GB)로 메모리 헤드룸 2배 확보 + vCPU 2배로 분석 속도 부수 효과.
-  # 비용 $60 → $120/월, 채용 데모 안정성 우선.
-  size = 'performance-8x'
+  # main은 HTTP gateway·R2 업로드·DB I/O만 — 분석은 Modal로 위임. 4GB로 충분.
+  size = 'performance-2x'

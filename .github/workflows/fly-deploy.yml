@@ -5,11 +5,10 @@ on:
   push:
     branches:
       - main
-    # 백엔드/인프라 변경 시에만 Fly 재배포. web/ 등 프론트 전용 변경은 Vercel 자동 배포만
-    # 일으키고 Fly 머신은 건드리지 않아 1~2분 warm-up 다운타임을 회피.
+    # 분석은 Modal로 위임 — fly는 HTTP gateway. main 코드/이미지/설정 변경 시만 재배포.
+    # scripts/는 평가 전용이라 fly 이미지에 안 박힘, vidoctor_modal.py는 Modal 수동 배포라 제외.
     paths:
       - 'src/**'
-      - 'scripts/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'Dockerfile'
@@ -22,24 +21,6 @@ jobs:
     concurrency: deploy-group    # optional: ensure only one action runs at a time
     steps:
       - uses: actions/checkout@v4
-
-      # KsponSpeech fine-tuned Whisper 모델(1.5GB)은 git에 포함되지 않아 R2에서 다운로드.
-      # Dockerfile의 `COPY models ./models`가 이 디렉토리를 컨테이너에 박는다.
-      - name: Download KsponSpeech model from R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          mkdir -p models/whisper-ko-ksponspeech-ct2
-          aws s3 cp \
-            s3://$R2_BUCKET/models/whisper-ko-ksponspeech-ct2/ \
-            models/whisper-ko-ksponspeech-ct2/ \
-            --recursive \
-            --endpoint-url "$R2_ENDPOINT"
-
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:
