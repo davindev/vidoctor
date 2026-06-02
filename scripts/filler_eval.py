@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from vidoctor.audio.filler import detect_filler_events
+from vidoctor.audio.filler import BURST_MERGE_GAP_SEC, detect_filler_events
 from vidoctor.eval._script_lib import (
     build_eval_parser,
     configure_eval_logging,
@@ -48,11 +48,19 @@ def _label_time_tokens(
 
 def main() -> None:
     parser = build_eval_parser("filler P/R/F1 + MLflow logging")
+    # None(=비활성)·숫자 모두 받기. 음수면 비활성으로 해석해 baseline 비교 편의.
+    parser.add_argument(
+        "--burst-gap",
+        type=float,
+        default=BURST_MERGE_GAP_SEC,
+        help="어휘 무관 burst 묶음 임계(초). 음수면 비활성(legacy 동작).",
+    )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)
 
+    burst_gap = args.burst_gap if args.burst_gap >= 0 else None
     words = load_or_transcribe(args.video_path, args.no_cache)
-    events = detect_filler_events(words)
+    events = detect_filler_events(words, burst_gap=burst_gap)
 
     labels = load_labels(args.labels_csv)
     filler_labels = [
@@ -73,6 +81,7 @@ def main() -> None:
         "label_count": len(filler_labels),
         "detected_count": len(events),
         "transcript_word_count": len(words),
+        "burst_gap_sec": burst_gap if burst_gap is not None else "disabled",
     }
 
     if not args.no_mlflow:
