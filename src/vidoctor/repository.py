@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -187,8 +187,45 @@ def update_video_status(video_id: str, status: str) -> None:
 
 def insert_analysis(video_id: str) -> str:
     """analyses row 생성 후 id 반환 (started_at은 DB default로 자동 채움)."""
-    res = _client().table("analyses").insert({"video_id": video_id}).execute()
+    res = (
+        _client()
+        .table("analyses")
+        .insert(
+            {
+                "video_id": video_id,
+                "progress": {"phase": "running", "completed_nodes": []},
+            }
+        )
+        .execute()
+    )
     return _first_row(res)["id"]
+
+
+def update_progress(analysis_id: str, node: str) -> None:
+    """노드 완료 시 progress.completed_nodes에 멱등 append.
+
+    LangGraph fan-out·retry로 같은 노드가 중복 들어올 수 있어 dedup (graph.run_analysis
+    주석 참고). Supabase jsonb array의 atomic append가 제한적이라 read-merge-write로
+    처리하며, Modal이 단일 분석을 직렬 처리하므로 동시 갱신 race는 없다.
+    """
+    res = (
+        _client()
+        .table("analyses")
+        .select("progress")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    data = cast("dict[str, Any]", res.data or {})
+    progress = cast("dict[str, Any]", data.get("progress") or {})
+    nodes = list(progress.get("completed_nodes") or [])
+    if node not in nodes:
+        nodes.append(node)
+    progress["completed_nodes"] = nodes
+    progress.setdefault("phase", "running")
+    _client().table("analyses").update({"progress": progress}).eq(
+        "id", analysis_id
+    ).execute()
 
 
 def count_analyses_today() -> int:
@@ -202,6 +239,55 @@ def count_analyses_today() -> int:
         .execute()
     )
     return res.count or 0
+
+
+# Modal timeout(900s) + 콜드스타트 여유. 이 시간을 넘긴 'analyzing'은 죽은 것으로 본다.
+STALE_THRESHOLD_SEC = 20 * 60
+
+
+def count_in_progress_analyses() -> int:
+    """현재 진행 중(status='analyzing')이고 아직 stale 아닌 영상 수 — 동시성 가드용.
+
+    Modal이 컨테이너 강제종료로 fail 기록을 못 한 stale row가 슬롯을 영구 점유하지
+    않도록 created_at 하한을 같이 검사한다. 정확한 원자 카운트가 아니라 비용 폭증을
+    막는 soft cap이다 (하드 상한은 Modal max_containers).
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=STALE_THRESHOLD_SEC)
+    res = (
+        _client()
+        .table("videos")
+        .select("id", count="exact")
+        .eq("status", "analyzing")
+        .gte("created_at", cutoff.isoformat())
+        .execute()
+    )
+    return res.count or 0
+
+
+def get_analysis_status(analysis_id: str) -> dict[str, Any] | None:
+    """폴링용 경량 조회 — videos.status + analyses.progress/error/started_at + video_id.
+
+    stale 판정·정리는 호출자(API)가 started_at으로 수행한다.
+    """
+    res = (
+        _client()
+        .table("analyses")
+        .select("started_at, error, progress, video_id, videos(status)")
+        .eq("id", analysis_id)
+        .single()
+        .execute()
+    )
+    data = cast("dict[str, Any] | None", res.data)
+    if not data:
+        return None
+    video = data.get("videos") or {}
+    return {
+        "status": video.get("status"),
+        "progress": data.get("progress") or {},
+        "error": data.get("error"),
+        "started_at": data.get("started_at"),
+        "video_id": data.get("video_id"),
+    }
 
 
 def finalize_analysis(
@@ -279,6 +365,9 @@ async def complete_analysis(
             for m in step_metrics
         ]
 
+    # findings·suggestions·finalize를 먼저 저장하고, 그 뒤에 'completed'로 마킹한다.
+    # 폴링이 videos.status로 완료를 판정하므로, completed가 데이터보다 먼저 커밋되면
+    # 클라이언트가 빈 결과를 받는 race가 생긴다. completed = 모든 데이터 저장 완료 불변식.
     await asyncio.gather(
         asyncio.to_thread(save_findings, analysis_id, state),
         asyncio.to_thread(save_suggestions, analysis_id, state.get("suggestions", []) or []),
@@ -288,8 +377,8 @@ async def complete_analysis(
             cost_usd=total_cost if step_metrics else None,
             metadata=merged_metadata or None,
         ),
-        asyncio.to_thread(update_video_status, video_id, "completed"),
     )
+    await asyncio.to_thread(update_video_status, video_id, "completed")
 
 
 def fail_analysis(analysis_id: str, video_id: str, error: str) -> None:

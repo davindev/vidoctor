@@ -91,28 +91,36 @@ async def analyze_video(
     storage_path: str,
     category: str,
     analysis_id: str,
+    video_id: str | None = None,
+    classify_metric: dict | None = None,
 ):
-    """R2 영상을 다운로드해 5차원 분석. 진행은 generator yield로 main에 stream.
+    """R2 영상을 다운로드해 5차원 분석 후 결과를 DB에 직접 저장한다.
 
-    yield 형식 (1건당):
-        {"event": "node", "name": "transcribe"}
-        ...
-        {"event": "complete", "state": {...직렬화된 결과...}}
-        {"event": "error", "message": "사용자 노출 가능한 메시지"}
+    이전에는 결과를 generator로 main(Fly)에 yield해 Fly가 저장했으나, 클라이언트
+    연결이 끊기면 분석이 통째로 유실됐다. 이제 Modal이 detached로 끝까지 실행하며
+    진행률(update_progress)·결과(complete_analysis)·실패(fail_analysis)를 스스로
+    기록한다. video_id·classify_metric은 배포 윈도우 호환을 위해 옵셔널이나 항상 전달된다.
     """
     import asyncio
+    import logging
     import tempfile
+    from contextlib import suppress
     from pathlib import Path
+    from typing import cast
 
     import boto3
 
     from vidoctor.config import get_settings
     from vidoctor.errors import SafeError
     from vidoctor.graph import run_analysis
+    from vidoctor.llm import LLMCallMetrics
     from vidoctor.log_setup import analysis_id_var, configure_logging
+    from vidoctor.repository import complete_analysis, fail_analysis, update_progress
 
     configure_logging()
     analysis_id_var.set(analysis_id)
+    log = logging.getLogger("vidoctor.modal")
+    vid = cast(str, video_id)
 
     # R2 → 임시 파일.
     settings = get_settings()
@@ -125,64 +133,43 @@ async def analyze_video(
     )
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp_path = Path(tmp.name)
+
+    def _on_node(name: str) -> None:
+        # 진행률은 best-effort — 기록 실패가 분석을 막지 않는다.
+        try:
+            update_progress(analysis_id, name)
+        except Exception:
+            log.warning("progress 기록 실패", extra={"node": name})
+
     try:
         await asyncio.to_thread(
             client.download_file, settings.r2_bucket, storage_path, str(tmp_path)
         )
-
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def _on_node(name: str) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, {"event": "node", "name": name})
-
-        async def _drive() -> None:
-            try:
-                state = await run_analysis(
-                    str(tmp_path), category, on_node_complete=_on_node  # type: ignore[arg-type]
-                )
-                serialized = _serialize_state(dict(state))
-                await queue.put({"event": "complete", "state": serialized})
-            except Exception as e:  # noqa: BLE001
-                public = (
-                    e.public_message
-                    if isinstance(e, SafeError)
-                    else "분석 중 오류가 발생했습니다."
-                )
-                await queue.put({"event": "error", "message": public})
-
-        drive_task = asyncio.create_task(_drive())
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-                if event["event"] in ("complete", "error"):
-                    break
-        finally:
-            if not drive_task.done():
-                drive_task.cancel()
+        # self-timeout(< Modal timeout 900s) — hang 시 스스로 fail 기록할 여지를 남긴다.
+        async with asyncio.timeout(870):
+            state = await run_analysis(
+                str(tmp_path), category, on_node_complete=_on_node  # type: ignore[arg-type]
+            )
+        # 분류기 메트릭은 graph 바깥(Fly)에서 생성돼 인자로 넘어옴 — 수동 합산.
+        if classify_metric is not None:
+            existing = state.get("step_metrics") or []
+            state["step_metrics"] = [*existing, LLMCallMetrics(**classify_metric)]
+        await complete_analysis(analysis_id, vid, state)
+        log.info("분석 완료")
+    except TimeoutError:
+        log.warning("분석 타임아웃")
+        with suppress(Exception):
+            await asyncio.to_thread(
+                fail_analysis, analysis_id, vid, "분석 시간이 초과되었습니다."
+            )
+    except Exception as e:  # noqa: BLE001
+        public = (
+            e.public_message
+            if isinstance(e, SafeError)
+            else "분석 중 오류가 발생했습니다."
+        )
+        log.exception("분석 실패")
+        with suppress(Exception):
+            await asyncio.to_thread(fail_analysis, analysis_id, vid, public)
     finally:
         tmp_path.unlink(missing_ok=True)
-
-
-def _serialize_state(state: dict) -> dict:
-    # audio_16k(ndarray)는 main에서 안 쓰고 직렬화도 무거워 제외.
-    import dataclasses
-
-    out: dict = {}
-    for key, value in state.items():
-        if key == "audio_16k":
-            continue
-        if isinstance(value, list):
-            serialized: list = []
-            for item in value:
-                if hasattr(item, "model_dump"):
-                    serialized.append(item.model_dump())
-                elif dataclasses.is_dataclass(item) and not isinstance(item, type):
-                    serialized.append(dataclasses.asdict(item))
-                else:
-                    serialized.append(item)
-            out[key] = serialized
-        else:
-            out[key] = value
-    return out

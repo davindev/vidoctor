@@ -61,6 +61,13 @@ export interface AnalysisListItem {
   status: string | null;
 }
 
+/** 진행 상태 폴링 응답 — videos.status + 노드 진행률. */
+export interface AnalysisStatus {
+  status: "analyzing" | "completed" | "failed" | null;
+  progress: { completed_nodes?: string[]; phase?: string };
+  error: string | null;
+}
+
 export interface FindingItem {
   dimension: Dimension;
   start: number;
@@ -233,6 +240,13 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export async function fetchAnalyses(): Promise<AnalysisListItem[]> {
   return getJSON<AnalysisListItem[]>("/api/analyses?limit=20");
+}
+
+/** 진행 상태 경량 폴링 — 분석 중 1.5초 간격으로 호출. */
+export async function fetchStatus(id: string): Promise<AnalysisStatus> {
+  return getJSON<AnalysisStatus>(
+    `/api/analyses/${encodeURIComponent(id)}/status`,
+  );
 }
 
 export async function fetchAnalysis(id: string): Promise<AnalysisDetail> {

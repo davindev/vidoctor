@@ -1,27 +1,17 @@
-/** POST /api/analyze SSE 스트림 컨슈머.
+/** POST /api/analyze — 분석을 시작하고 analysis_id를 받는다.
  *
- * 표준 EventSource는 GET·동일 origin·credentials만 받아 multipart 업로드와 안 맞음.
- * fetch + ReadableStream 으로 직접 SSE 프레임을 파싱한다 — `event: <name>\ndata: <json>\n\n`. */
+ * 분석은 서버(Modal)가 클라이언트 연결과 무관하게 끝까지 실행하므로, 진행 상황은
+ * 더 이상 스트리밍하지 않고 GET /api/analyses/{id}/status 폴링으로 추적한다. */
 
-import { API_BASE, assertOk, type Category, type CategoryChoice } from "./api";
+import { API_BASE, assertOk, type CategoryChoice } from "./api";
 
-/** 클라이언트 측 진행 단계. 서버는 "downloading" | "classifying" | "uploading"을 보내고,
- * "running"은 `uploaded` 이벤트 후 클라이언트가 derive. */
+/** 클라이언트 측 진행 단계. 사전 단계(다운로드·분류·업로드)는 POST 응답 전까지만
+ * 표시하고, POST가 analysis_id를 반환하면 "running"으로 고정해 폴링으로 넘어간다. */
 export type AnalyzingPhase =
   | "downloading"
   | "classifying"
   | "uploading"
   | "running";
-
-export type AnalyzeEvent =
-  | { type: "status"; phase: "downloading" | "classifying" | "uploading" }
-  | { type: "metadata"; filename: string }
-  | { type: "category"; category: Category }
-  | { type: "started"; analysis_id: string }
-  | { type: "uploaded" }
-  | { type: "node"; name: string }
-  | { type: "complete"; analysis_id: string }
-  | { type: "error"; message: string; analysis_id: string | null };
 
 /** 입력 소스 — 파일 업로드 또는 유튜브 URL. */
 export type AnalyzeSource =
@@ -32,27 +22,11 @@ export interface AnalyzeOptions {
   source: AnalyzeSource;
   category: CategoryChoice;
   signal?: AbortSignal;
-  onEvent: (ev: AnalyzeEvent) => void;
 }
 
-/** SSE 라인을 누적하며 빈 줄(=`\n\n`)에서 한 이벤트를 분리. */
-function parseFrame(frame: string): AnalyzeEvent | null {
-  let event = "message";
-  let data = "";
-  for (const line of frame.split("\n")) {
-    if (line.startsWith("event:")) event = line.slice(6).trim();
-    else if (line.startsWith("data:")) data += line.slice(5).trim();
-  }
-  if (!data) return null;
-  try {
-    const payload = JSON.parse(data) as Record<string, unknown>;
-    return { type: event, ...payload } as AnalyzeEvent;
-  } catch {
-    return null;
-  }
-}
-
-export async function postAnalyze(opts: AnalyzeOptions): Promise<void> {
+/** 분석을 시작하고 analysis_id를 반환한다. 업로드·분류·Modal 위임까지만 기다리며,
+ * 분석 진행은 호출자가 fetchStatus 폴링으로 추적한다. */
+export async function postAnalyze(opts: AnalyzeOptions): Promise<string> {
   const form = new FormData();
   form.append("category", opts.category);
   if (opts.source.kind === "file") {
@@ -67,24 +41,6 @@ export async function postAnalyze(opts: AnalyzeOptions): Promise<void> {
     signal: opts.signal,
   });
   await assertOk(res);
-  if (!res.body) {
-    throw new Error("응답 본문이 비어 있습니다 (SSE 스트림 없음)");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE 프레임 구분자 `\n\n` 기준으로 누적 버퍼를 쪼개서 처리.
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const ev = parseFrame(frame);
-      if (ev) opts.onEvent(ev);
-    }
-  }
+  const data = (await res.json()) as { analysis_id: string };
+  return data.analysis_id;
 }

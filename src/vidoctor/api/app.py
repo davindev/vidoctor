@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
@@ -17,37 +18,29 @@ from typing import Any, Literal, cast
 import modal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
 from vidoctor.config import get_settings
-from vidoctor.errors import SafeError
 from vidoctor.graph import Category
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
     DIM_TO_STATE_FIELD,
-    AnalysisState,
-    ContentGapEvent,
-    CPSEvent,
-    DeadZoneEvent,
-    FillerEvent,
-    GazeEvent,
-    Suggestion,
-    Word,
 )
 from vidoctor.llm import LLMCallMetrics
-from vidoctor.log_setup import analysis_id_var, configure_logging
+from vidoctor.log_setup import configure_logging
 from vidoctor.repository import (
-    complete_analysis,
+    STALE_THRESHOLD_SEC,
     count_analyses_today,
+    count_in_progress_analyses,
     create_video_signed_url,
     delete_video_for_analysis,
     fail_analysis,
     get_analysis_findings,
     get_analysis_meta,
+    get_analysis_status,
     get_analysis_storage_path,
     get_analysis_suggestions,
     get_analysis_video_meta,
@@ -60,13 +53,10 @@ from vidoctor.vision.category_classifier import classify_category
 
 _log = logging.getLogger(__name__)
 
-# Modal 컨테이너 콜드 스타트(~1~2분) + 분석(~5분) 여유분. hang 케이스만 끊고 정상은 통과.
-_ANALYSIS_TIMEOUT_SEC = 15 * 60
-
-# Modal이 분석 자체는 자동 스케일하지만 main의 R2 업로드·DB I/O 경합 방지 위해 5로 제한.
-# 한도 초과 시 EventSource 단일 핸들러 일관성 위해 HTTP 상태 분기 대신 SSE error 이벤트로.
+# 진행 중(status='analyzing') 분석 동시 상한. 분석은 Modal이 detached로 끝까지 돌고
+# Fly는 기다리지 않으므로 Semaphore 대신 DB count로 가드한다. 정확한 원자 상한이 아니라
+# 비용 폭증을 막는 soft cap이며, 하드 상한은 Modal max_containers가 담당한다.
 _MAX_CONCURRENT_ANALYSES = 5
-_analysis_slot = asyncio.Semaphore(_MAX_CONCURRENT_ANALYSES)
 
 # Modal에 배포된 분석 함수 — vidoctor_modal.py의 analyze_video.
 _modal_analyze = modal.Function.from_name("vidoctor-analyze", "analyze_video")
@@ -199,6 +189,20 @@ class VideoUrlResponse(BaseModel):
     url: str | None
 
 
+class AnalyzeResponse(BaseModel):
+    """분석 시작 응답 — 이후 클라이언트는 이 id로 status를 폴링한다."""
+
+    analysis_id: str
+
+
+class AnalysisStatusResponse(BaseModel):
+    """폴링용 진행 상태 — status(analyzing|completed|failed) + 노드 진행률 + 에러."""
+
+    status: str | None
+    progress: dict[str, Any]
+    error: str | None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -306,42 +310,6 @@ async def delete_analysis(analysis_id: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _deserialize_state(
-    state_dict: dict[str, Any], video_path: str, category: Category
-) -> AnalysisState:
-    # vidoctor_modal._serialize_state와 대칭. complete_analysis가 model_dump를 호출하므로
-    # 받은 dict를 Pydantic·dataclass 객체로 복원해야 함.
-    return cast(
-        AnalysisState,
-        {
-            "video_path": video_path,
-            "category": category,
-            "transcript": [Word(**w) for w in state_dict.get("transcript", [])],
-            "fillers": [FillerEvent(**e) for e in state_dict.get("fillers", [])],
-            "cps_anomalies": [
-                CPSEvent(**e) for e in state_dict.get("cps_anomalies", [])
-            ],
-            "dead_zones": [
-                DeadZoneEvent(**e) for e in state_dict.get("dead_zones", [])
-            ],
-            "gaze_issues": [GazeEvent(**e) for e in state_dict.get("gaze_issues", [])],
-            "content_gaps": [
-                ContentGapEvent(**e) for e in state_dict.get("content_gaps", [])
-            ],
-            "suggestions": [
-                Suggestion(**s) for s in state_dict.get("suggestions", [])
-            ],
-            "step_metrics": [
-                LLMCallMetrics(**m) for m in state_dict.get("step_metrics", [])
-            ],
-        },
-    )
-
-
 async def _save_upload_to_tmp(upload: UploadFile) -> tuple[Path, str]:
     """UploadFile을 청크 단위로 임시 파일에 떨궈 메모리 폭발 회피."""
     suffix = Path(upload.filename or "video.mp4").suffix or ".mp4"
@@ -352,66 +320,43 @@ async def _save_upload_to_tmp(upload: UploadFile) -> tuple[Path, str]:
         return Path(tmp.name), (upload.filename or "video.mp4")
 
 
-async def _analyze_stream(
+async def _run_analyze(
     *,
     upload: UploadFile | None,
     url: str | None,
     category: Category | Literal["auto"],
-) -> AsyncIterator[str]:
-    """영상 입력 → R2 업로드 → Modal 분석 위임 → DB 저장. 진행은 SSE로 stream."""
+) -> str:
+    """영상 입력 → R2 업로드 → Modal에 detached 위임 → analysis_id 반환.
+
+    분석 자체는 Fly가 기다리지 않는다 — Modal이 끝까지 실행하며 진행률·결과를 DB에
+    직접 저장하므로, 클라이언트 연결이 끊겨도 분석은 보존된다. 여기서는 다운로드·
+    업로드·분류까지만 동기로 처리하고 spawn 직후 즉시 반환한다. 진행은 폴링으로 추적.
+    """
     # 전체 사용자 합산 일일 한도 — IP rate limit이 우회되어도 비용 절대 상한 역할.
     today_count = await asyncio.to_thread(count_analyses_today)
     quota = get_settings().daily_quota
     if today_count >= quota:
-        yield _sse(
-            "error",
-            {
-                "message": (
-                    f"오늘 분석 한도({quota}건)에 도달했습니다. 내일 다시 시도해주세요."
-                ),
-                "analysis_id": None,
-            },
+        raise HTTPException(
+            status_code=429,
+            detail=f"오늘 분석 한도({quota}건)에 도달했습니다. 내일 다시 시도해주세요.",
         )
-        return
 
-    # non-blocking acquire. 내부 수치 노출 회피 위해 메시지 일반화.
-    try:
-        async with asyncio.timeout(0):
-            await _analysis_slot.acquire()
-    except TimeoutError:
-        yield _sse(
-            "error",
-            {
-                "message": (
-                    "현재 다른 분석이 진행 중입니다. 잠시 후 다시 시도해주세요."
-                ),
-                "analysis_id": None,
-            },
+    # 진행 중 동시 분석 soft cap. 내부 수치 노출 회피 위해 메시지 일반화.
+    in_progress = await asyncio.to_thread(count_in_progress_analyses)
+    if in_progress >= _MAX_CONCURRENT_ANALYSES:
+        raise HTTPException(
+            status_code=409,
+            detail="현재 다른 분석이 진행 중입니다. 잠시 후 다시 시도해주세요.",
         )
-        return
 
     tmp_path: Path | None = None
-    analysis_id: str | None = None
-    video_id: str | None = None
-    classify_metrics: LLMCallMetrics | None = None
-    analysis_id_token = None
-
-    async def _safe_fail(reason: str) -> None:
-        """fail_analysis 베스트 에포트 — DB row가 in-progress로 영구 남지 않게."""
-        if analysis_id and video_id:
-            with suppress(Exception):
-                await asyncio.to_thread(fail_analysis, analysis_id, video_id, reason)
-
     try:
         if url is not None:
-            yield _sse("status", {"phase": "downloading"})
             try:
                 tmp_path, title = await download_youtube(url)
             except YouTubeIngestError as e:
-                yield _sse("error", {"message": str(e), "analysis_id": None})
-                return
+                raise HTTPException(status_code=400, detail=str(e)) from e
             filename = f"{title}.mp4"
-            yield _sse("metadata", {"filename": filename})
         else:
             if upload is None:
                 # endpoint XOR 검증이 빠졌을 때만 닿는 invariant 위반.
@@ -420,142 +365,66 @@ async def _analyze_stream(
 
         # auto 분류와 R2 업로드는 입력 의존성이 없어 병렬 — classify가 cv2로 keyframe만
         # 읽기 때문에 동시 file read에 race 없음.
+        classify_metrics: LLMCallMetrics | None = None
         if category == "auto":
-            yield _sse("status", {"phase": "classifying"})
             classify_task = asyncio.create_task(classify_category(str(tmp_path)))
             upload_task = asyncio.create_task(
                 asyncio.to_thread(upload_video_file, tmp_path, filename)
             )
             category, classify_metrics = await classify_task
-            yield _sse("category", {"category": category})
-            yield _sse("status", {"phase": "uploading"})
             storage_path = await upload_task
         else:
-            yield _sse("status", {"phase": "uploading"})
             storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
 
-        # client가 graph 완료 전부터 결과 페이지를 polling할 수 있게 row를 먼저 만든다.
         video_id = await asyncio.to_thread(insert_video, storage_path, category, None)
         analysis_id = await asyncio.to_thread(insert_analysis, video_id)
-        analysis_id_token = analysis_id_var.set(analysis_id)
         _log.info(
             "분석 시작",
-            # LogRecord 표준 attr `filename`과 충돌 회피 위해 `video_filename` 사용.
-            extra={"category": category, "video_filename": filename, "source": "url" if url else "file"},
-        )
-        yield _sse("started", {"analysis_id": analysis_id})
-        yield _sse("uploaded", {})
-
-        # Modal에 분석 위임. 컨테이너 격리 + auto-scale로 동시 N건 처리.
-        # generator 소비를 별도 task로 두고 main은 15초마다 ping을 발송해 fetch idle 끊김 회피.
-        modal_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-
-        async def _consume_modal() -> None:
-            try:
-                async for event in _modal_analyze.remote_gen.aio(  # type: ignore[attr-defined]
-                    storage_path, category, analysis_id
-                ):
-                    await modal_queue.put(("event", event))
-            except Exception as exc:  # noqa: BLE001
-                await modal_queue.put(("exception", exc))
-            finally:
-                await modal_queue.put(("done", None))
-
-        consume_task = asyncio.create_task(_consume_modal())
-        final_state_dict: dict[str, Any] | None = None
-        modal_error: str | None = None
-
-        try:
-            async with asyncio.timeout(_ANALYSIS_TIMEOUT_SEC):
-                while True:
-                    try:
-                        kind, payload = await asyncio.wait_for(
-                            modal_queue.get(), timeout=15.0
-                        )
-                    except TimeoutError:
-                        yield _sse("ping", {})
-                        continue
-                    if kind == "done":
-                        break
-                    if kind == "exception":
-                        raise payload
-                    event_type = payload.get("event")
-                    if event_type == "node":
-                        _log.info("graph 노드 완료", extra={"node": payload["name"]})
-                        yield _sse("node", {"name": payload["name"]})
-                    elif event_type == "complete":
-                        final_state_dict = payload["state"]
-                    elif event_type == "error":
-                        modal_error = (
-                            payload.get("message") or "분석 중 오류가 발생했습니다."
-                        )
-                    else:
-                        _log.warning("알 수 없는 Modal 이벤트", extra={"event": event_type})
-        finally:
-            if not consume_task.done():
-                consume_task.cancel()
-                with suppress(Exception, asyncio.CancelledError, TimeoutError):
-                    await asyncio.wait_for(consume_task, 5.0)
-
-        if modal_error is not None:
-            raise SafeError(modal_error)
-        if final_state_dict is None:
-            _log.error("Modal complete 이벤트 누락")
-            raise SafeError("분석 중 오류가 발생했습니다.")
-        graph_state = _deserialize_state(final_state_dict, str(tmp_path), category)
-
-        # 분류기는 graph 바깥에서 실행되므로 메트릭을 수동으로 합산.
-        if classify_metrics is not None:
-            existing = graph_state.get("step_metrics") or []
-            graph_state["step_metrics"] = [*existing, classify_metrics]
-
-        await complete_analysis(analysis_id, video_id, graph_state)
-        total_cost = sum(m.cost_usd for m in (graph_state.get("step_metrics") or []))
-        _log.info("분석 완료", extra={"total_cost_usd": round(total_cost, 6)})
-        yield _sse("complete", {"analysis_id": analysis_id})
-
-    except (asyncio.CancelledError, GeneratorExit):
-        # 클라이언트 disconnect — DB row가 in-progress로 영구히 남지 않게 fail 처리.
-        await _safe_fail("클라이언트 연결 끊김")
-        raise
-    except TimeoutError:
-        _log.warning("분석 파이프라인 타임아웃")
-        await _safe_fail("분석 타임아웃")
-        yield _sse(
-            "error",
-            {
-                "message": (
-                    "분석 시간이 초과되어 중단되었습니다. "
-                    "더 짧은 영상으로 다시 시도해주세요."
-                ),
+            extra={
+                "category": category,
+                # LogRecord 표준 attr `filename`과 충돌 회피 위해 `video_filename` 사용.
+                "video_filename": filename,
+                "source": "url" if url else "file",
                 "analysis_id": analysis_id,
             },
         )
-    except Exception as e:  # noqa: BLE001
-        _log.exception("분석 파이프라인 실패")
-        await _safe_fail(str(e))
-        # 내부 예외 메시지 그대로 노출하면 Supabase/OpenAI raw error가 새어나감.
-        # SafeError처럼 의도적으로 user-facing인 예외만 메시지 그대로, 나머지는 일반화.
-        public = e.public_message if isinstance(e, SafeError) else "분석 중 오류가 발생했습니다."
-        yield _sse("error", {"message": public, "analysis_id": analysis_id})
+
+        # Modal에 detached 위임 — Fly 연결·재배포와 무관하게 끝까지 실행되며 결과를 DB에 저장.
+        # LLMCallMetrics는 dataclass — Modal에 넘길 직렬화 가능한 dict로 변환.
+        classify_metric = asdict(classify_metrics) if classify_metrics else None
+        try:
+            await _modal_analyze.spawn.aio(  # type: ignore[attr-defined]
+                storage_path, category, analysis_id, video_id, classify_metric
+            )
+        except Exception as e:  # noqa: BLE001
+            # spawn 실패 시 row가 영원히 analyzing으로 남지 않게 즉시 정리(20분 stale 대기 회피).
+            _log.exception("Modal spawn 실패")
+            with suppress(Exception):
+                await asyncio.to_thread(
+                    fail_analysis, analysis_id, video_id, "분석을 시작하지 못했습니다."
+                )
+            raise HTTPException(
+                status_code=502,
+                detail="분석을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            ) from e
+
+        return analysis_id
     finally:
-        if analysis_id_token is not None:
-            analysis_id_var.reset(analysis_id_token)
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
-        _analysis_slot.release()
 
 
-@app.post("/api/analyze")
+@app.post("/api/analyze", response_model=AnalyzeResponse)
 @limiter.limit("5/hour;15/day")
 async def analyze(
     request: Request,
     category: str = Form(...),
     file: UploadFile | None = File(default=None),
     url: str | None = Form(default=None),
-) -> StreamingResponse:
-    """영상 업로드 또는 YouTube URL을 받아 분석을 시작한다 (SSE 진행 스트림).
+) -> AnalyzeResponse:
+    """영상 업로드 또는 YouTube URL을 받아 분석을 시작하고 analysis_id를 반환한다.
 
+    분석 진행은 GET /api/analyses/{id}/status 폴링으로 추적한다.
     rate limit 한도 초과 시 slowapi가 429로 자동 응답 — 정확한 한도는 decorator 참고.
     """
     # graph 분기 안전성 위해 CATEGORY_DIMENSIONS 멤버 또는 "auto"만 통과.
@@ -575,12 +444,42 @@ async def analyze(
     typed_category: Category | Literal["auto"] = (
         "auto" if category == "auto" else cast(Category, category)
     )
-    return StreamingResponse(
-        _analyze_stream(
-            upload=file if has_file else None,
-            url=url.strip() if has_url and url else None,
-            category=typed_category,
-        ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    analysis_id = await _run_analyze(
+        upload=file if has_file else None,
+        url=url.strip() if has_url and url else None,
+        category=typed_category,
     )
+    return AnalyzeResponse(analysis_id=analysis_id)
+
+
+def _is_stale(started_at: str | None) -> bool:
+    """started_at 이후 STALE_THRESHOLD_SEC 초과면 죽은 분석으로 본다."""
+    if not started_at:
+        return False
+    started = datetime.fromisoformat(started_at)
+    return (datetime.now(UTC) - started).total_seconds() > STALE_THRESHOLD_SEC
+
+
+@app.get(
+    "/api/analyses/{analysis_id}/status", response_model=AnalysisStatusResponse
+)
+@limiter.limit("60/minute")
+async def get_status(request: Request, analysis_id: str) -> AnalysisStatusResponse:
+    """진행 상태 폴링 — 경량 단건 조회.
+
+    status='analyzing'인데 Modal이 강제종료로 fail 기록조차 못한 stale row는 읽기
+    시점에 failed로 정리한다(별도 cron 불필요).
+    """
+    s = await asyncio.to_thread(get_analysis_status, analysis_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="분석을 찾을 수 없습니다.")
+
+    status = s["status"]
+    error = s["error"]
+    if status == "analyzing" and _is_stale(s["started_at"]):
+        status = "failed"
+        error = error or "분석이 시간 내에 완료되지 않았습니다."
+        with suppress(Exception):
+            await asyncio.to_thread(fail_analysis, analysis_id, s["video_id"], error)
+
+    return AnalysisStatusResponse(status=status, progress=s["progress"], error=error)

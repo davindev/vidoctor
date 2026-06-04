@@ -123,12 +123,20 @@ function HistoryButton({
         </span>
         <div className="flex items-center gap-2 text-[11.5px] text-ink-4">
           <span>{when}</span>
-          {item.error && (
+          {item.status === "analyzing" ? (
+            <>
+              <span className="h-[3px] w-[3px] rounded-full bg-line-2" />
+              <span className="flex items-center gap-1 text-accent">
+                <Spinner size={9} />
+                분석 중
+              </span>
+            </>
+          ) : item.status === "failed" || item.error ? (
             <>
               <span className="h-[3px] w-[3px] rounded-full bg-line-2" />
               <span className="text-danger">실패</span>
             </>
-          )}
+          ) : null}
         </div>
       </div>
       <span
