@@ -99,7 +99,8 @@ function HistoryButton({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const filename = basename(item.storage_path) || "이름 없음";
+  // storage_path는 uuid 키라 표시용으로 부적합 — filename 우선, 옛 데이터는 basename 폴백.
+  const filename = item.filename || basename(item.storage_path) || "이름 없음";
   const catLabel = item.category ? CATEGORY_LABEL[item.category] : "—";
   const when = fmtRelative(item.started_at);
 

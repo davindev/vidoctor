@@ -59,6 +59,7 @@ export interface AnalysisListItem {
   category: Category | null;
   storage_path: string | null;
   status: string | null;
+  filename: string | null;
 }
 
 /** 진행 상태 폴링 응답 — videos.status + 노드 진행률. */
@@ -111,6 +112,7 @@ export interface AnalysisDetail {
   category: Category | null;
   storage_path: string | null;
   duration_sec: number | null;
+  filename: string | null;
   findings: Record<Dimension, FindingItem[]>;
   suggestions: SuggestionItem[];
   step_metrics: StepMetric[];

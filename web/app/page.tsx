@@ -42,6 +42,9 @@ type AppState =
 
 export default function Home() {
   const [items, setItems] = useState<AnalysisListItem[]>([]);
+  // 업로드(파일 전송) 동안은 서버 row가 아직 없어 사이드바가 빈다. 그 구간을 메우는
+  // 낙관적 항목 — POST 응답 후 실제 row로 교체된다.
+  const [pendingItem, setPendingItem] = useState<AnalysisListItem | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   // cold-start 재시도 동안 사이드바가 "기록 없음"으로 잘못 보이지 않도록 초기 로드를 추적.
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -67,6 +70,20 @@ export default function Home() {
   }, [refreshHistory]);
 
   const handleSelect = (id: string) => {
+    // 낙관적 항목(업로드 중, 아직 서버 row 없음)은 상세 조회가 불가하므로 업로드 진행
+    // 화면으로 복귀시킨다. POST가 끝나면 폴링 useEffect가 analysisId를 채워 이어받는다.
+    if (pendingItem && id === pendingItem.id) {
+      setState({
+        kind: "analyzing",
+        category: pendingItem.category,
+        filename: pendingItem.filename,
+        phase: pendingItem.filename ? "uploading" : "downloading",
+        completed: new Set(),
+        errorMessage: null,
+        analysisId: null,
+      });
+      return;
+    }
     // 분석은 Modal이 연결과 무관하게 끝까지 돌므로, 진행 중이어도 자유롭게 이동 가능.
     // 진행 중(status='analyzing') 항목을 고르면 폴링으로 진행률을 이어본다.
     const item = items.find((it) => it.id === id);
@@ -74,7 +91,7 @@ export default function Home() {
       setState({
         kind: "analyzing",
         category: item.category,
-        filename: basename(item.storage_path),
+        filename: item.filename ?? basename(item.storage_path),
         phase: "running",
         completed: new Set(),
         errorMessage: null,
@@ -104,6 +121,18 @@ export default function Home() {
           ? "classifying"
           : "uploading";
 
+    // 업로드 시작 시점부터 사이드바에 항목이 보이도록 낙관적 항목을 먼저 띄운다.
+    const tempId = crypto.randomUUID();
+    setPendingItem({
+      id: tempId,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      error: null,
+      category: initialCategory,
+      storage_path: null,
+      status: "analyzing",
+      filename: initialFilename,
+    });
     setState({
       kind: "analyzing",
       category: initialCategory,
@@ -126,8 +155,11 @@ export default function Home() {
           ? { ...prev, analysisId: id, phase: "running" }
           : prev,
       );
-      void refreshHistory();
+      // 실제 row를 먼저 받아 사이드바에 반영한 뒤 낙관적 항목을 거둔다(깜빡임 방지).
+      await refreshHistory();
+      setPendingItem(null);
     } catch (e) {
+      setPendingItem(null);
       setState({
         kind: "idle",
         lastError: e instanceof Error ? e.message : String(e),
@@ -198,19 +230,33 @@ export default function Home() {
     };
   }, [analyzingId, refreshHistory]);
 
+  // 사이드바에 진행 중(analyzing) 항목이 있으면, 그 분석을 보고 있지 않아도 목록을
+  // 주기적으로 갱신해 완료·실패를 반영한다. 개별 폴링은 현재 보는 분석 1건만 추적하므로
+  // 백그라운드로 도는 다른 분석의 완료는 이 목록 폴링이 잡는다.
+  const hasAnalyzing = items.some((it) => it.status === "analyzing");
+  useEffect(() => {
+    if (!hasAnalyzing) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "hidden") void refreshHistory();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [hasAnalyzing, refreshHistory]);
+
   const selectedId =
     state.kind === "result"
       ? state.analysisId
       : state.kind === "analyzing"
-        ? state.analysisId
+        ? (state.analysisId ?? pendingItem?.id ?? null)
         : null;
+  // 업로드 중(서버 row 생성 전)에는 낙관적 항목을 사이드바 맨 위에 끼워 보여준다.
+  const sidebarItems = pendingItem ? [pendingItem, ...items] : items;
   // 분석이 연결과 분리돼 백그라운드에서 도므로 진행 중에도 사이드바 이동을 막지 않는다.
   const sidebarDisabled = false;
 
   return (
     <div className="grid min-h-screen grid-cols-[300px_1fr]">
       <Sidebar
-        items={items}
+        items={sidebarItems}
         selectedId={selectedId}
         disabled={sidebarDisabled}
         loadError={historyError}

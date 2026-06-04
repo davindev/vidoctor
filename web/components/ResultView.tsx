@@ -118,7 +118,7 @@ export function ResultView({ analysisId, deletable, onDeleted }: Props) {
     );
   }
 
-  const filename = basename(detail.storage_path) || "—";
+  const filename = detail.filename || basename(detail.storage_path) || "—";
   const latencySec =
     detail.started_at && detail.finished_at
       ? (new Date(detail.finished_at).getTime() -

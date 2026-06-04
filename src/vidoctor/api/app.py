@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 import modal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -120,6 +121,7 @@ class AnalysisListItem(BaseModel):
     category: str | None
     storage_path: str | None
     status: str | None
+    filename: str | None
 
 
 class FindingItem(BaseModel):
@@ -177,6 +179,7 @@ class AnalysisDetail(BaseModel):
     category: str | None
     storage_path: str | None
     duration_sec: float | None
+    filename: str | None
     findings: dict[str, list[FindingItem]]
     suggestions: list[SuggestionItem]
     step_metrics: list[StepMetric]
@@ -217,6 +220,11 @@ async def list_recent_analyses(
     items: list[AnalysisListItem] = []
     for row in rows:
         video = row.get("videos") or {}
+        status = video.get("status")
+        # Modal 강제종료로 fail 기록조차 못한 stale row는 목록에서도 failed로 보여, 사이드바가
+        # 영구 'analyzing'으로 남아 목록 폴링이 무한히 도는 것을 막는다(DB 정리는 status 조회 담당).
+        if status == "analyzing" and _is_stale(row.get("started_at")):
+            status = "failed"
         items.append(
             AnalysisListItem(
                 id=row["id"],
@@ -225,7 +233,8 @@ async def list_recent_analyses(
                 error=row.get("error"),
                 category=video.get("category"),
                 storage_path=video.get("storage_path"),
-                status=video.get("status"),
+                status=status,
+                filename=video.get("filename"),
             )
         )
     return items
@@ -278,6 +287,7 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
         category=video_meta.get("category") if video_meta else None,
         storage_path=video_meta.get("storage_path") if video_meta else None,
         duration_sec=video_meta.get("duration_sec") if video_meta else None,
+        filename=video_meta.get("filename") if video_meta else None,
         findings=findings,
         suggestions=suggestions,
         step_metrics=step_metrics,
@@ -363,20 +373,26 @@ async def _run_analyze(
                 raise RuntimeError("upload·url XOR invariant 위반")
             tmp_path, filename = await _save_upload_to_tmp(upload)
 
+        # R2 키는 파일명 특수문자(따옴표·슬래시 등)가 새지 않도록 uuid 기반 안전 키로
+        # 고정하고, 원본 파일명은 videos.filename에 따로 보관한다.
+        suffix = Path(filename).suffix or ".mp4"
+        storage_key = f"videos/{uuid4().hex}{suffix}"
         # auto 분류와 R2 업로드는 입력 의존성이 없어 병렬 — classify가 cv2로 keyframe만
         # 읽기 때문에 동시 file read에 race 없음.
         classify_metrics: LLMCallMetrics | None = None
         if category == "auto":
             classify_task = asyncio.create_task(classify_category(str(tmp_path)))
             upload_task = asyncio.create_task(
-                asyncio.to_thread(upload_video_file, tmp_path, filename)
+                asyncio.to_thread(upload_video_file, tmp_path, storage_key)
             )
             category, classify_metrics = await classify_task
             storage_path = await upload_task
         else:
-            storage_path = await asyncio.to_thread(upload_video_file, tmp_path, filename)
+            storage_path = await asyncio.to_thread(upload_video_file, tmp_path, storage_key)
 
-        video_id = await asyncio.to_thread(insert_video, storage_path, category, None)
+        video_id = await asyncio.to_thread(
+            insert_video, storage_path, category, None, filename
+        )
         analysis_id = await asyncio.to_thread(insert_analysis, video_id)
         _log.info(
             "분석 시작",
@@ -409,6 +425,16 @@ async def _run_analyze(
             ) from e
 
         return analysis_id
+    except HTTPException:
+        # 위에서 의도적으로 던진 400/502 등은 그대로 전달.
+        raise
+    except Exception as e:  # noqa: BLE001
+        # R2 업로드·DB insert 등 예상 못한 실패 — 내부 예외를 노출하지 않고 일반화.
+        _log.exception("분석 시작 처리 실패")
+        raise HTTPException(
+            status_code=500,
+            detail="분석을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.",
+        ) from e
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)

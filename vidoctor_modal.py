@@ -109,6 +109,7 @@ async def analyze_video(
     from typing import cast
 
     import boto3
+    from botocore.exceptions import ClientError
 
     from vidoctor.config import get_settings
     from vidoctor.errors import SafeError
@@ -142,9 +143,19 @@ async def analyze_video(
             log.warning("progress 기록 실패", extra={"node": name})
 
     try:
-        await asyncio.to_thread(
-            client.download_file, settings.r2_bucket, storage_path, str(tmp_path)
-        )
+        try:
+            await asyncio.to_thread(
+                client.download_file, settings.r2_bucket, storage_path, str(tmp_path)
+            )
+        except ClientError as e:
+            # 404(키 없음)와 그 외(권한·일시 오류)를 구분해 사용자에게 정확히 안내.
+            code = str(e.response.get("Error", {}).get("Code"))
+            msg = (
+                "영상 파일을 찾을 수 없습니다."
+                if code in ("404", "NoSuchKey")
+                else "영상을 불러오지 못했습니다."
+            )
+            raise SafeError(msg) from e
         # self-timeout(< Modal timeout 900s) — hang 시 스스로 fail 기록할 여지를 남긴다.
         async with asyncio.timeout(870):
             state = await run_analysis(

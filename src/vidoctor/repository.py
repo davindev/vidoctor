@@ -157,8 +157,12 @@ def insert_video(
     storage_path: str,
     category: Category,
     duration_sec: float | None = None,
+    filename: str | None = None,
 ) -> str:
-    """videos row 생성 (status='analyzing') 후 id 반환."""
+    """videos row 생성 (status='analyzing') 후 id 반환.
+
+    storage_path는 R2 객체 키(uuid 기반), filename은 표시용 원본 파일명.
+    """
     res = (
         _client()
         .table("videos")
@@ -167,6 +171,7 @@ def insert_video(
                 "storage_path": storage_path,
                 "category": category,
                 "duration_sec": duration_sec,
+                "filename": filename,
                 "status": "analyzing",
             }
         )
@@ -213,10 +218,10 @@ def update_progress(analysis_id: str, node: str) -> None:
         .table("analyses")
         .select("progress")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    data = cast("dict[str, Any]", res.data or {})
+    data = cast("dict[str, Any]", (res.data if res is not None else None) or {})
     progress = cast("dict[str, Any]", data.get("progress") or {})
     nodes = list(progress.get("completed_nodes") or [])
     if node not in nodes:
@@ -274,10 +279,10 @@ def get_analysis_status(analysis_id: str) -> dict[str, Any] | None:
         .table("analyses")
         .select("started_at, error, progress, video_id, videos(status)")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    data = cast("dict[str, Any] | None", res.data)
+    data = cast("dict[str, Any] | None", res.data if res is not None else None)
     if not data:
         return None
     video = data.get("videos") or {}
@@ -398,7 +403,8 @@ def list_analyses(limit: int = 20) -> list[dict[str, Any]]:
         _client()
         .table("analyses")
         .select(
-            "id, started_at, finished_at, error, videos(category, storage_path, status)"
+            "id, started_at, finished_at, error, "
+            "videos(category, storage_path, status, filename)"
         )
         .order("started_at", desc=True)
         .limit(limit)
@@ -436,10 +442,10 @@ def get_analysis_meta(analysis_id: str) -> dict[str, Any]:
         .table("analyses")
         .select("started_at, finished_at, cost_usd, metadata")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    return cast(dict[str, Any], res.data or {})
+    return cast("dict[str, Any]", (res.data if res is not None else None) or {})
 
 
 def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
@@ -469,12 +475,12 @@ def get_analysis_video_meta(analysis_id: str) -> dict[str, Any] | None:
     res = (
         _client()
         .table("analyses")
-        .select("videos(category, storage_path, duration_sec)")
+        .select("videos(category, storage_path, duration_sec, filename)")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    data = cast(dict[str, Any] | None, res.data)
+    data = cast("dict[str, Any] | None", res.data if res is not None else None)
     if not data:
         return None
     return cast(dict[str, Any] | None, data.get("videos"))
@@ -487,10 +493,10 @@ def get_analysis_storage_path(analysis_id: str) -> str | None:
         .table("analyses")
         .select("videos(storage_path)")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    data = cast(dict[str, Any] | None, res.data)
+    data = cast("dict[str, Any] | None", res.data if res is not None else None)
     if not data:
         return None
     video = cast(dict[str, Any] | None, data.get("videos"))
@@ -529,10 +535,10 @@ def delete_video_for_analysis(analysis_id: str) -> None:
         .table("analyses")
         .select("video_id, videos(storage_path)")
         .eq("id", analysis_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    data = cast(dict[str, Any] | None, res.data)
+    data = cast("dict[str, Any] | None", res.data if res is not None else None)
     if not data:
         raise LookupError(f"분석을 찾을 수 없습니다: {analysis_id}")
 
