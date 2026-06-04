@@ -18,6 +18,13 @@ import {
   type AnalyzingPhase,
 } from "@/lib/sse";
 
+// 시드된 샘플 분석 2건 — 사용자가 삭제하지 못하도록 삭제 UI를 숨긴다.
+// 그 외 영상은 사용자가 직접 올린 것이라 삭제 가능.
+const SAMPLE_ANALYSIS_IDS = new Set([
+  "615a025e-422b-464f-aa1c-74b069924c9b",
+  "9b2fdee7-2959-41be-b290-14c007368d32",
+]);
+
 type AppState =
   | { kind: "idle"; lastError: string | null }
   | {
@@ -211,6 +218,7 @@ export default function Home() {
         {state.kind === "result" && (
           <ResultView
             analysisId={state.analysisId}
+            deletable={!SAMPLE_ANALYSIS_IDS.has(state.analysisId)}
             onDeleted={handleDeleted}
           />
         )}

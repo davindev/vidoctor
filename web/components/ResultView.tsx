@@ -22,6 +22,7 @@ import { Spinner } from "./Spinner";
 
 interface Props {
   analysisId: string;
+  deletable: boolean;
   onDeleted: () => void;
 }
 
@@ -57,7 +58,7 @@ const FINDING_DETAIL: Record<Dimension, (ev: FindingItem) => string> = {
   content_gap: (ev) => String(ev.payload.description ?? ""),
 };
 
-export function ResultView({ analysisId, onDeleted }: Props) {
+export function ResultView({ analysisId, deletable, onDeleted }: Props) {
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -224,45 +225,49 @@ export function ResultView({ analysisId, onDeleted }: Props) {
         </section>
       </div>
 
-      {/* Delete card */}
-      <div className="mt-7 flex items-center justify-between gap-4 rounded-xl border border-[#EAC8C2] bg-[#FBEFEB] px-[22px] py-[18px]">
-        <div className="text-[13px] text-[#6E3A33]">
-          이 분석을 더 이상 사용하지 않나요?{" "}
-          <b className="font-semibold text-danger">영상과 분석 결과</b>가 모두
-          제거됩니다.
-        </div>
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          className="flex-shrink-0 rounded-full border border-[#E5C2BD] bg-transparent px-4 py-2 text-[13px] font-medium text-danger transition-[background,border-color] duration-150 hover:border-danger hover:bg-danger-tint"
-        >
-          삭제
-        </button>
-      </div>
+      {deletable && (
+        <>
+          {/* Delete card */}
+          <div className="mt-7 flex items-center justify-between gap-4 rounded-xl border border-[#EAC8C2] bg-[#FBEFEB] px-[22px] py-[18px]">
+            <div className="text-[13px] text-[#6E3A33]">
+              이 분석을 더 이상 사용하지 않나요?{" "}
+              <b className="font-semibold text-danger">영상과 분석 결과</b>가 모두
+              제거됩니다.
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              className="flex-shrink-0 rounded-full border border-[#E5C2BD] bg-transparent px-4 py-2 text-[13px] font-medium text-danger transition-[background,border-color] duration-150 hover:border-danger hover:bg-danger-tint"
+            >
+              삭제
+            </button>
+          </div>
 
-      {deleteError && (
-        <ErrorBanner
-          icon={false}
-          message={`삭제 실패: ${deleteError}`}
-          className="mt-3"
-        />
-      )}
+          {deleteError && (
+            <ErrorBanner
+              icon={false}
+              message={`삭제 실패: ${deleteError}`}
+              className="mt-3"
+            />
+          )}
 
-      {confirmOpen && (
-        <DeleteModal
-          filename={filename}
-          onCancel={() => setConfirmOpen(false)}
-          onConfirm={async () => {
-            try {
-              await deleteAnalysis(analysisId);
-              setConfirmOpen(false);
-              onDeleted();
-            } catch (e) {
-              setDeleteError(e instanceof Error ? e.message : String(e));
-              setConfirmOpen(false);
-            }
-          }}
-        />
+          {confirmOpen && (
+            <DeleteModal
+              filename={filename}
+              onCancel={() => setConfirmOpen(false)}
+              onConfirm={async () => {
+                try {
+                  await deleteAnalysis(analysisId);
+                  setConfirmOpen(false);
+                  onDeleted();
+                } catch (e) {
+                  setDeleteError(e instanceof Error ? e.message : String(e));
+                  setConfirmOpen(false);
+                }
+              }}
+            />
+          )}
+        </>
       )}
     </ResultPage>
   );
