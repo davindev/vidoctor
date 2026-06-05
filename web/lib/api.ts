@@ -244,7 +244,7 @@ export async function fetchAnalyses(): Promise<AnalysisListItem[]> {
   return getJSON<AnalysisListItem[]>("/api/analyses?limit=20");
 }
 
-/** 진행 상태 경량 폴링 — 분석 중 1.5초 간격으로 호출. */
+/** 진행 상태 경량 폴링 — 분석 중 3초 간격으로 호출. */
 export async function fetchStatus(id: string): Promise<AnalysisStatus> {
   return getJSON<AnalysisStatus>(
     `/api/analyses/${encodeURIComponent(id)}/status`,

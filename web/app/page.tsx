@@ -172,7 +172,7 @@ export default function Home() {
     await refreshHistory();
   };
 
-  // 진행 중 분석을 1.5초 간격으로 폴링 — 직접 시작한 분석과 재접속해 연 분석 모두 처리.
+  // 진행 중 분석을 3초 간격으로 폴링 — 직접 시작한 분석과 재접속해 연 분석 모두 처리.
   // 작업은 서버에서 끝까지 도므로, 이 훅은 진행률을 DB에서 읽어 화면에 반영할 뿐이다.
   const analyzingId = state.kind === "analyzing" ? state.analysisId : null;
   useEffect(() => {
@@ -182,7 +182,7 @@ export default function Home() {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const schedule = () => {
-      if (!stopped) timer = setTimeout(poll, 1500);
+      if (!stopped) timer = setTimeout(poll, 3000);
     };
 
     const poll = async () => {
