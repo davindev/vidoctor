@@ -1,8 +1,9 @@
 """Modal에 배포되는 분석 함수 — 동시 N건을 컨테이너 격리로 처리.
 
 main(Fly)이 R2에 영상 업로드 후 storage_path를 이 함수에 넘기면, Modal이 자동
-스케일된 컨테이너에서 R2 다운로드 → run_analysis → 진행 이벤트 stream → 결과 반환.
-컨테이너 종료 시 OS가 모든 메모리를 회수해 누적 OOM 발생 안 함.
+스케일된 컨테이너에서 R2 다운로드 → run_analysis를 실행하고, 진행률·결과·실패를
+DB(Supabase)에 직접 기록한다. main은 spawn 후 기다리지 않으므로 연결이 끊겨도
+분석이 끝까지 보존된다. 컨테이너 종료 시 OS가 모든 메모리를 회수해 누적 OOM이 발생하지 않는다.
 
 배포:
     modal deploy vidoctor_modal.py
@@ -10,8 +11,7 @@ main(Fly)이 R2에 영상 업로드 후 storage_path를 이 함수에 넘기면,
 호출 (main 측):
     import modal
     fn = modal.Function.from_name("vidoctor-analyze", "analyze_video")
-    async for event in fn.remote_gen.aio(storage_path, category, analysis_id):
-        ...
+    await fn.spawn.aio(storage_path, category, analysis_id, video_id, classify_metric)
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ import {
   postAnalyze,
   type AnalyzeSource,
   type AnalyzingPhase,
-} from "@/lib/sse";
+} from "@/lib/analyze";
 
 // 시드된 샘플 분석 2건 — 사용자가 삭제하지 못하도록 삭제 UI를 숨긴다.
 // 그 외 영상은 사용자가 직접 올린 것이라 삭제 가능.

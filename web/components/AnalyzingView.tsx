@@ -1,7 +1,7 @@
 "use client";
 
 import type { Category } from "@/lib/api";
-import type { AnalyzingPhase } from "@/lib/sse";
+import type { AnalyzingPhase } from "@/lib/analyze";
 import { Pipeline } from "./Pipeline";
 import { ResultHeader, ResultPage } from "./ResultHeader";
 

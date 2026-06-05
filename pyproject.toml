@@ -7,11 +7,10 @@ requires-python = ">=3.11,<3.12"
 # fly main(FastAPI gateway)이 실제 import하는 패키지만 base. 분석 전용 ML deps는
 # [project.optional-dependencies] analyze로 분리해 fly 이미지 크기 ~2GB 절감.
 dependencies = [
-    # HTTP/SSE
+    # HTTP
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.18",
-    "sse-starlette>=2.1.0",
     "slowapi>=0.1.9",
     # 도메인 모델·설정
     "pydantic>=2.9.0",

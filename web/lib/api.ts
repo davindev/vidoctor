@@ -1,6 +1,6 @@
 /** Vidoctor FastAPI 클라이언트 — Pydantic 스키마와 1:1 매핑되는 타입 + REST 헬퍼.
  *
- * SSE 진행 스트림(`POST /api/analyze`)은 별도 `lib/sse.ts`에서 처리. */
+ * 분석 시작(`POST /api/analyze`)은 별도 `lib/analyze.ts`에서 처리. */
 
 export type Category = "lecture" | "vlog" | "other";
 

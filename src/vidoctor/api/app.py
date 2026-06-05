@@ -1,6 +1,6 @@
 """FastAPI app — Next.js 프론트엔드용 HTTP 엔드포인트.
 
-분석 CRUD + SSE 진행 스트림. 엔드포인트 상세는 /docs (OpenAPI) 참고.
+분석 CRUD + 진행 상태 조회(폴링).
 """
 
 from __future__ import annotations

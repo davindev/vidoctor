@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CATEGORY_CHOICE_LABEL, type CategoryChoice } from "@/lib/api";
-import type { AnalyzeSource } from "@/lib/sse";
+import type { AnalyzeSource } from "@/lib/analyze";
 import { Dropzone } from "./Dropzone";
 import { ErrorBanner } from "./ErrorBanner";
 

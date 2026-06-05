@@ -2867,19 +2867,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sse-starlette"
-version = "3.4.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "starlette" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/38/82/10cdfab4ab663a6b6bd624d33f55b2cfa41af5105be033a6d5d135a92c5f/sse_starlette-3.4.2.tar.gz", hash = "sha256:2f9a7f51ed84395a0427fb9f66cb1ec11f7899d977a72cbc9070b962a2e14489", size = 35236, upload-time = "2026-05-06T19:42:13.727Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/27/351c71e803c56090d8d3bf9520422debeb8ed938871fd4f7ef519805a6c5/sse_starlette-3.4.2-py3-none-any.whl", hash = "sha256:6ea5d35b7ce979a3de5a0db5f77fe886b1616e4b3e1ad93fba502bd9b5fb662f", size = 16516, upload-time = "2026-05-06T19:42:12.201Z" },
-]
-
-[[package]]
 name = "starlette"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3460,7 +3447,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "slowapi" },
-    { name = "sse-starlette" },
     { name = "supabase" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yt-dlp" },
@@ -3514,7 +3500,6 @@ requires-dist = [
     { name = "scenedetect", marker = "extra == 'analyze'", specifier = ">=0.6.7.1" },
     { name = "silero-vad", marker = "extra == 'analyze'", specifier = ">=6.2.1" },
     { name = "slowapi", specifier = ">=0.1.9" },
-    { name = "sse-starlette", specifier = ">=2.1.0" },
     { name = "supabase", specifier = ">=2.10.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'analyze'", specifier = ">=2.0.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'analyze'", specifier = ">=2.0.0" },

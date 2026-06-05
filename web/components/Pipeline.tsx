@@ -7,7 +7,7 @@ import {
   type Category,
   type Dimension,
 } from "@/lib/api";
-import type { AnalyzingPhase } from "@/lib/sse";
+import type { AnalyzingPhase } from "@/lib/analyze";
 import { ErrorBanner } from "./ErrorBanner";
 
 type NodeState = "waiting" | "active" | "done" | "skipped";

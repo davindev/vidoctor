@@ -1,7 +1,7 @@
 /** POST /api/analyze — 분석을 시작하고 analysis_id를 받는다.
  *
  * 분석은 서버(Modal)가 클라이언트 연결과 무관하게 끝까지 실행하므로, 진행 상황은
- * 더 이상 스트리밍하지 않고 GET /api/analyses/{id}/status 폴링으로 추적한다. */
+ * GET /api/analyses/{id}/status 폴링으로 추적한다. */
 
 import { API_BASE, assertOk, type CategoryChoice } from "./api";
 
