@@ -26,6 +26,9 @@ const SAMPLE_ANALYSIS_IDS = new Set([
   "9b2fdee7-2959-41be-b290-14c007368d32",
 ]);
 
+// 진행 상태 폴링 간격(ms) — 진행률(상세)·목록 폴링 공통.
+const POLL_INTERVAL_MS = 3000;
+
 type AppState =
   | { kind: "idle"; lastError: string | null }
   | {
@@ -172,7 +175,7 @@ export default function Home() {
     await refreshHistory();
   };
 
-  // 진행 중 분석을 3초 간격으로 폴링 — 직접 시작한 분석과 재접속해 연 분석 모두 처리.
+  // 진행 중 분석을 POLL_INTERVAL_MS 간격으로 폴링 — 직접 시작한 분석과 재접속해 연 분석 모두 처리.
   // 작업은 서버에서 끝까지 도므로, 이 훅은 진행률을 DB에서 읽어 화면에 반영할 뿐이다.
   const analyzingId = state.kind === "analyzing" ? state.analysisId : null;
   useEffect(() => {
@@ -182,7 +185,7 @@ export default function Home() {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const schedule = () => {
-      if (!stopped) timer = setTimeout(poll, 3000);
+      if (!stopped) timer = setTimeout(poll, POLL_INTERVAL_MS);
     };
 
     const poll = async () => {
@@ -198,7 +201,8 @@ export default function Home() {
         const nodes = s.progress.completed_nodes ?? [];
         setState((prev) =>
           prev.kind === "analyzing" && prev.analysisId === id
-            ? { ...prev, completed: new Set(nodes) }
+            ? // auto 분류 결과를 반영해 비활성 차원을 '건너뜀'으로 표시.
+              { ...prev, completed: new Set(nodes), category: s.category ?? prev.category }
             : prev,
         );
         if (s.status === "completed") {
@@ -238,7 +242,7 @@ export default function Home() {
     if (!hasAnalyzing) return;
     const timer = setInterval(() => {
       if (document.visibilityState !== "hidden") void refreshHistory();
-    }, 4000);
+    }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [hasAnalyzing, refreshHistory]);
 

@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import boto3
+import httpx
 from botocore.config import Config
+from postgrest.types import CountMethod
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -55,6 +58,28 @@ def _client() -> Client:
         settings.supabase_url,
         settings.supabase_service_key.get_secret_value(),
     )
+
+
+_T = TypeVar("_T")
+
+
+def _retry_read(fn: Callable[..., _T]) -> Callable[..., _T]:
+    """Supabase read를 stale 연결(RemoteProtocolError) 시 한 번 재시도하도록 감싼다.
+
+    write는 재시도가 중복을 일으킬 수 있어 read 전용이다.
+    """
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> _T:
+        last: httpx.RemoteProtocolError | None = None
+        for _ in range(2):
+            try:
+                return fn(*args, **kwargs)
+            except httpx.RemoteProtocolError as e:
+                last = e
+        raise cast(httpx.RemoteProtocolError, last)
+
+    return wrapper
 
 
 @lru_cache(maxsize=1)
@@ -233,13 +258,14 @@ def update_progress(analysis_id: str, node: str) -> None:
     ).execute()
 
 
+@_retry_read
 def count_analyses_today() -> int:
     """오늘(UTC) 시작된 분석 수. 일일 글로벌 한도 체크용."""
     today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     res = (
         _client()
         .table("analyses")
-        .select("id", count="exact")
+        .select("id", count=CountMethod.exact)
         .gte("started_at", today_start.isoformat())
         .execute()
     )
@@ -250,6 +276,7 @@ def count_analyses_today() -> int:
 STALE_THRESHOLD_SEC = 20 * 60
 
 
+@_retry_read
 def count_in_progress_analyses() -> int:
     """현재 진행 중(status='analyzing')이고 아직 stale 아닌 영상 수 — 동시성 가드용.
 
@@ -261,7 +288,7 @@ def count_in_progress_analyses() -> int:
     res = (
         _client()
         .table("videos")
-        .select("id", count="exact")
+        .select("id", count=CountMethod.exact)
         .eq("status", "analyzing")
         .gte("created_at", cutoff.isoformat())
         .execute()
@@ -269,6 +296,7 @@ def count_in_progress_analyses() -> int:
     return res.count or 0
 
 
+@_retry_read
 def get_analysis_status(analysis_id: str) -> dict[str, Any] | None:
     """폴링용 경량 조회 — videos.status + analyses.progress/error/started_at + video_id.
 
@@ -277,7 +305,7 @@ def get_analysis_status(analysis_id: str) -> dict[str, Any] | None:
     res = (
         _client()
         .table("analyses")
-        .select("started_at, error, progress, video_id, videos(status)")
+        .select("started_at, error, progress, video_id, videos(status, category)")
         .eq("id", analysis_id)
         .maybe_single()
         .execute()
@@ -288,6 +316,7 @@ def get_analysis_status(analysis_id: str) -> dict[str, Any] | None:
     video = data.get("videos") or {}
     return {
         "status": video.get("status"),
+        "category": video.get("category"),
         "progress": data.get("progress") or {},
         "error": data.get("error"),
         "started_at": data.get("started_at"),
@@ -314,14 +343,17 @@ def finalize_analysis(
 
 
 def save_findings(analysis_id: str, state: AnalysisState) -> None:
-    """state의 5차원 이벤트를 findings 테이블에 bulk insert."""
+    """state의 5차원 이벤트를 findings에 저장. 재시도 중복 방지로 기존 행을 비우고 insert(멱등)."""
     rows = _collect_finding_rows(analysis_id, state)
+    _client().table("findings").delete().eq("analysis_id", analysis_id).execute()
     if rows:
         _client().table("findings").insert(rows).execute()
 
 
 def save_suggestions(analysis_id: str, suggestions: list[Suggestion]) -> None:
-    """suggestions를 bulk insert. finding_refs는 'filler:0' 같은 dim:idx 식별자."""
+    """suggestions를 저장. save_findings처럼 기존 행을 비우고 insert(멱등).
+    finding_refs는 'filler:0' 같은 dim:idx 식별자."""
+    _client().table("suggestions").delete().eq("analysis_id", analysis_id).execute()
     if not suggestions:
         return
     rows = [
@@ -370,20 +402,29 @@ async def complete_analysis(
             for m in step_metrics
         ]
 
-    # findings·suggestions·finalize를 먼저 저장하고, 그 뒤에 'completed'로 마킹한다.
-    # 폴링이 videos.status로 완료를 판정하므로, completed가 데이터보다 먼저 커밋되면
-    # 클라이언트가 빈 결과를 받는 race가 생긴다. completed = 모든 데이터 저장 완료 불변식.
-    await asyncio.gather(
-        asyncio.to_thread(save_findings, analysis_id, state),
-        asyncio.to_thread(save_suggestions, analysis_id, state.get("suggestions", []) or []),
-        asyncio.to_thread(
-            finalize_analysis,
-            analysis_id,
-            cost_usd=total_cost if step_metrics else None,
-            metadata=merged_metadata or None,
-        ),
-    )
-    await asyncio.to_thread(update_video_status, video_id, "completed")
+    # 저장 도중 stale 연결(RemoteProtocolError)로 실패하면 끝난 분석이 통째로 유실되므로
+    # 1회 재시도한다. save_findings/save_suggestions가 멱등(삭제 후 insert)이라 중복 없음.
+    for attempt in range(2):
+        try:
+            await asyncio.gather(
+                asyncio.to_thread(save_findings, analysis_id, state),
+                asyncio.to_thread(
+                    save_suggestions, analysis_id, state.get("suggestions", []) or []
+                ),
+                asyncio.to_thread(
+                    finalize_analysis,
+                    analysis_id,
+                    cost_usd=total_cost if step_metrics else None,
+                    metadata=merged_metadata or None,
+                ),
+            )
+            # completed 마킹은 위 저장이 끝난 뒤에. 폴링이 status='completed'를 보고 상세를
+            # 가져가므로, 먼저 마킹되면 findings가 아직 없어 빈 결과를 받는다.
+            await asyncio.to_thread(update_video_status, video_id, "completed")
+            return
+        except httpx.RemoteProtocolError:
+            if attempt == 1:
+                raise
 
 
 def fail_analysis(analysis_id: str, video_id: str, error: str) -> None:
@@ -397,6 +438,7 @@ def fail_analysis(analysis_id: str, video_id: str, error: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@_retry_read
 def list_analyses(limit: int = 20) -> list[dict[str, Any]]:
     """최근 분석 리스트. video 메타도 join으로 함께."""
     res = (
@@ -413,6 +455,7 @@ def list_analyses(limit: int = 20) -> list[dict[str, Any]]:
     return _row_data(res)
 
 
+@_retry_read
 def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
     """findings를 차원별 list[Event]로 그룹화 — UI에서 직접 시각화할 수 있는 형태."""
     res = (
@@ -431,6 +474,7 @@ def get_analysis_findings(analysis_id: str) -> dict[str, list[BaseModel]]:
     return grouped
 
 
+@_retry_read
 def get_analysis_meta(analysis_id: str) -> dict[str, Any]:
     """UI 카드용 분석 메타 — cost_usd / 시작·종료 timestamp / step 분리 metadata.
 
@@ -448,6 +492,7 @@ def get_analysis_meta(analysis_id: str) -> dict[str, Any]:
     return cast("dict[str, Any]", (res.data if res is not None else None) or {})
 
 
+@_retry_read
 def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
     """suggestions를 저장 순서대로 반환 — LLM 출력 순서를 그대로 보존."""
     res = (
@@ -467,6 +512,7 @@ def get_analysis_suggestions(analysis_id: str) -> list[Suggestion]:
     ]
 
 
+@_retry_read
 def get_analysis_video_meta(analysis_id: str) -> dict[str, Any] | None:
     """analysis_id → 연결된 video의 category/storage_path/duration_sec 메타.
 
@@ -486,6 +532,7 @@ def get_analysis_video_meta(analysis_id: str) -> dict[str, Any] | None:
     return cast(dict[str, Any] | None, data.get("videos"))
 
 
+@_retry_read
 def get_analysis_storage_path(analysis_id: str) -> str | None:
     """analysis_id → 연결된 video.storage_path(R2 객체 키). 없으면 None."""
     res = (

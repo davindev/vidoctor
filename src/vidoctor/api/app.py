@@ -202,6 +202,7 @@ class AnalysisStatusResponse(BaseModel):
     """폴링용 진행 상태 — status(analyzing|completed|failed) + 노드 진행률 + 에러."""
 
     status: str | None
+    category: str | None
     progress: dict[str, Any]
     error: str | None
 
@@ -508,4 +509,6 @@ async def get_status(request: Request, analysis_id: str) -> AnalysisStatusRespon
         with suppress(Exception):
             await asyncio.to_thread(fail_analysis, analysis_id, s["video_id"], error)
 
-    return AnalysisStatusResponse(status=status, progress=s["progress"], error=error)
+    return AnalysisStatusResponse(
+        status=status, category=s["category"], progress=s["progress"], error=error
+    )

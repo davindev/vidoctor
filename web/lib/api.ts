@@ -65,6 +65,7 @@ export interface AnalysisListItem {
 /** 진행 상태 폴링 응답 — videos.status + 노드 진행률. */
 export interface AnalysisStatus {
   status: "analyzing" | "completed" | "failed" | null;
+  category: Category | null;
   progress: { completed_nodes?: string[]; phase?: string };
   error: string | null;
 }
