@@ -50,6 +50,12 @@ vidoctor_image = (
     .env(
         {
             "PATH": "/app/.venv/bin:/usr/local/bin:/usr/bin:/bin",
+            # ctranslate2(GPU)가 cuDNN·cuBLAS를 찾도록 — torch CUDA wheel이 설치한 nvidia
+            # 라이브러리 경로. 미설정 시 libcudnn 로드 실패로 GPU transcribe가 죽는다.
+            "LD_LIBRARY_PATH": (
+                "/app/.venv/lib/python3.11/site-packages/nvidia/cublas/lib:"
+                "/app/.venv/lib/python3.11/site-packages/nvidia/cudnn/lib"
+            ),
             "VIDOCTOR_WHISPER_MODEL": "/app/models/whisper-ko-ksponspeech-ct2",
             "HF_HOME": "/app/.cache/huggingface",
             "XDG_CACHE_HOME": "/app/.cache",
@@ -79,11 +85,13 @@ vidoctor_secret = modal.Secret.from_name("vidoctor-secrets")
 
 @app.function(
     secrets=[vidoctor_secret],
+    # transcribe(WhisperX/ctranslate2)를 GPU로 — CPU 대비 전사 시간 단축.
+    gpu="T4",
     cpu=8.0,
     memory=16384,
     timeout=900,
-    # idle 5분 후 컨테이너 종료 — 메모리 회수 + 비용 절감.
-    scaledown_window=300,
+    # GPU는 idle 비용이 커서 짧게 — 직후 요청만 웜으로 흡수하고 반납.
+    scaledown_window=120,
     # 동시 피크에 대비한 컨테이너 상한.
     max_containers=20,
 )
@@ -101,6 +109,12 @@ async def analyze_video(
     진행률(update_progress)·결과(complete_analysis)·실패(fail_analysis)를 스스로
     기록한다. video_id·classify_metric은 배포 윈도우 호환을 위해 옵셔널이나 항상 전달된다.
     """
+    import os
+
+    # _load_models가 이 변수로 device를 정한다. 여기서 cuda를 박아 런타임 추론은 GPU로,
+    # 빌드 prewarm 단계는 이 변수가 없어 CPU로 로드된다(prewarm은 모델 캐싱 목적이라 무방).
+    os.environ.setdefault("VIDOCTOR_DEVICE", "cuda")
+
     import asyncio
     import logging
     import tempfile

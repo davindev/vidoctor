@@ -100,24 +100,23 @@ filterwarnings = [
     "ignore::UserWarning:pyannote.audio.core.io",
 ]
 
-# 배포 이미지(Linux)는 CPU 추론이라 CUDA wheel(~2GB) 불필요 → PyTorch CPU index에서
-# 받아 이미지 크기 절감. macOS(로컬 dev)는 PyPI default가 이미 MPS 가속 포함 CPU
-# wheel이라 마커로 분기.
+# 배포 이미지(Linux)는 Modal GPU에서 WhisperX/ctranslate2 추론을 돌리므로 CUDA wheel을
+# 받는다 — nvidia-cudnn-cu12(9.x)·cublas를 번들해 ctranslate2 4.7의 GPU 요구(CUDA 12.3+,
+# cuDNN 9)를 충족. macOS(로컬 dev)는 PyPI default(MPS 가속 CPU wheel)라 마커로 분기.
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
 ]
 # torchvision/torchaudio는 transformers·pyannote.audio transitive로 들어오는데, torch
-# CPU wheel과 ABI 호환을 맞추려면 같은 CPU index에서 가져와야 한다. PyPI 기본은 CUDA
-# 빌드라 `torchvision::nms` operator 부재나 `libtorch_cuda.so` 부재로 import 실패.
+# CUDA wheel과 ABI 호환을 맞추려면 같은 CUDA index에서 가져와야 한다(operator·so 불일치 방지).
 torchvision = [
-    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
 ]
 torchaudio = [
-    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu126", marker = "sys_platform == 'linux'" },
 ]

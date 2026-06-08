@@ -7,6 +7,7 @@ load되어 프로세스 수명 동안 캐시. settings.whisper_model로 모델 s
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -18,12 +19,21 @@ import whisperx
 from vidoctor.config import ROOT, get_settings
 from vidoctor.graph.state import Word
 
-DEVICE = "cpu"                          # CPU 추론 (Apple Silicon에서 안정, CUDA 없는 환경 호환)
-COMPUTE_TYPE = "int8"                   # int8 양자화 (속도 ↑ 메모리 ↓, 한국어 정확도 영향 미미)
 # 기본은 KsponSpeech fine-tuned. ROOT 기준이라 로컬·Docker 양쪽에서 해석된다.
 DEFAULT_MODEL_NAME = str(ROOT / "models" / "whisper-ko-ksponspeech-ct2")
 LANGUAGE = "ko"
-BATCH_SIZE = 16                         # WhisperX 권장 default, 16GB RAM에서 안정
+
+
+def _resolve_runtime() -> tuple[str, str, int]:
+    """(device, compute_type, batch_size)를 런타임에 결정한다.
+
+    VIDOCTOR_DEVICE=cuda면 Modal GPU, 그 외(로컬·빌드 prewarm)는 CPU.
+    _load_models 첫 호출 시 한 번 평가된다.
+    """
+    if os.environ.get("VIDOCTOR_DEVICE") == "cuda":
+        # 모델이 int8 양자화 저장이라 GPU도 int8로 맞춘다.
+        return "cuda", "int8", 24
+    return "cpu", "int8", 16
 
 
 @dataclass(frozen=True)
@@ -33,23 +43,32 @@ class _LoadedModels:
     asr: Any
     align_model: Any
     align_metadata: Any
+    device: str
+    batch_size: int
 
 
 @lru_cache(maxsize=1)
 def _load_models() -> _LoadedModels:
     """ASR + wav2vec2 align 모델 lazy load. settings.whisper_model 우선, 없으면 default."""
     model_name = get_settings().whisper_model or DEFAULT_MODEL_NAME
+    device, compute_type, batch_size = _resolve_runtime()
     asr = whisperx.load_model(
         model_name,
-        device=DEVICE,
-        compute_type=COMPUTE_TYPE,
+        device=device,
+        compute_type=compute_type,
         language=LANGUAGE,
     )
     align_model, align_metadata = whisperx.load_align_model(
         language_code=LANGUAGE,
-        device=DEVICE,
+        device=device,
     )
-    return _LoadedModels(asr=asr, align_model=align_model, align_metadata=align_metadata)
+    return _LoadedModels(
+        asr=asr,
+        align_model=align_model,
+        align_metadata=align_metadata,
+        device=device,
+        batch_size=batch_size,
+    )
 
 
 def _transcribe_sync(media_path: str) -> tuple[list[Word], np.ndarray]:
@@ -60,13 +79,15 @@ def _transcribe_sync(media_path: str) -> tuple[list[Word], np.ndarray]:
     models = _load_models()
     audio = whisperx.load_audio(media_path)
 
-    asr_result = models.asr.transcribe(audio, batch_size=BATCH_SIZE, language=LANGUAGE)
+    asr_result = models.asr.transcribe(
+        audio, batch_size=models.batch_size, language=LANGUAGE
+    )
     aligned = whisperx.align(
         asr_result["segments"],
         models.align_model,
         models.align_metadata,
         audio,
-        DEVICE,
+        models.device,
         return_char_alignments=False,
     )
 
