@@ -5,6 +5,8 @@ import { fileExt, fmtBytes } from "@/lib/format";
 import { ErrorBanner } from "./ErrorBanner";
 
 const MAX_BYTES = 300 * 1024 * 1024;
+/** 업로드 용량 상한(MB) — 메시지·안내 문구의 단일 출처. 백엔드 config.MAX_VIDEO_BYTES와 동기화. */
+export const MAX_MB = MAX_BYTES / (1024 * 1024);
 const ALLOWED_EXT = ["mp4", "mov", "mpeg4"];
 
 interface Props {
@@ -19,7 +21,7 @@ function validate(f: File): string | null {
     return "지원하지 않는 확장자입니다. mp4, mov, mpeg4 만 가능합니다.";
   }
   if (f.size > MAX_BYTES) {
-    return `파일 크기가 300MB를 초과했습니다. (현재 ${fmtBytes(f.size)})`;
+    return `파일 크기가 ${MAX_MB}MB를 초과했습니다. (현재 ${fmtBytes(f.size)})`;
   }
   return null;
 }
@@ -113,7 +115,7 @@ export function Dropzone({ file, disabled, onChange }: Props) {
             파일을 끌어다 놓거나 <span className="font-semibold text-ink">파일 선택</span>
           </div>
           <div className="text-[12.5px] leading-[1.7] text-ink-4">
-            최대 300MB · 지원 확장자 mp4, mov, mpeg4
+            최대 {MAX_MB}MB · 지원 확장자 mp4, mov, mpeg4
           </div>
         </div>
       )}

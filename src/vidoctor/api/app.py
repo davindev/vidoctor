@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -19,12 +19,13 @@ from uuid import uuid4
 import modal
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
-from vidoctor.config import get_settings
+from vidoctor.config import MAX_VIDEO_BYTES, get_settings
 from vidoctor.graph import Category
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
@@ -59,6 +60,11 @@ _log = logging.getLogger(__name__)
 # 비용 폭증을 막는 soft cap이며, 하드 상한은 Modal max_containers가 담당한다.
 _MAX_CONCURRENT_ANALYSES = 5
 
+_MAX_MB = MAX_VIDEO_BYTES // (1024 * 1024)
+# Content-Length 조기 차단 임계. 멀티파트 envelope(boundary·필드)가 포함돼 파일 크기보다
+# 크므로 여유를 둬 정상 한도 파일의 오거부를 막는다 — 권위 검증은 _save_upload_to_tmp.
+_MAX_REQUEST_BYTES = MAX_VIDEO_BYTES + 2 * 1024 * 1024
+
 # Modal에 배포된 분석 함수 — vidoctor_modal.py의 analyze_video.
 _modal_analyze = modal.Function.from_name("vidoctor-analyze", "analyze_video")
 
@@ -79,6 +85,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _reject_oversized_upload(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """업로드 본문이 spool되기 전에 Content-Length로 명백한 초과를 조기 차단한다.
+
+    Starlette는 멀티파트 본문을 핸들러 진입 전에 디스크로 받으므로, 헤더 단계에서 막아야
+    대용량 수신 자체를 피한다. Content-Length 없는(chunked) 요청은 _save_upload_to_tmp의
+    스트리밍 가드가 처리한다.
+    """
+    if request.method == "POST" and request.url.path == "/api/analyze":
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_REQUEST_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"파일 크기가 {_MAX_MB}MB를 초과했습니다."},
+            )
+    return await call_next(request)
 
 
 def _client_ip(request: Request) -> str:
@@ -322,13 +348,30 @@ async def delete_analysis(analysis_id: str) -> dict[str, str]:
 
 
 async def _save_upload_to_tmp(upload: UploadFile) -> tuple[Path, str]:
-    """UploadFile을 청크 단위로 임시 파일에 떨궈 메모리 폭발 회피."""
+    """UploadFile을 청크 단위로 임시 파일에 떨궈 메모리 폭발 회피.
+
+    누적 크기가 상한을 넘으면 중단한다 — 클라이언트 검증이 우회돼도 서버에서 막는다.
+    """
     suffix = Path(upload.filename or "video.mp4").suffix or ".mp4"
-    with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        # 8MB 청크 — 큰 영상도 메모리 폭주 없이 스트리밍 저장.
-        while chunk := await upload.read(8 * 1024 * 1024):
-            tmp.write(chunk)
-        return Path(tmp.name), (upload.filename or "video.mp4")
+    tmp = NamedTemporaryFile(delete=False, suffix=suffix)  # noqa: SIM115
+    tmp_path = Path(tmp.name)
+    written = 0
+    try:
+        with tmp:
+            # 8MB 청크 — 큰 영상도 메모리 폭주 없이 스트리밍 저장.
+            while chunk := await upload.read(8 * 1024 * 1024):
+                written += len(chunk)
+                if written > MAX_VIDEO_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"파일 크기가 {_MAX_MB}MB를 초과했습니다.",
+                    )
+                tmp.write(chunk)
+    except BaseException:
+        # 초과·스트림 오류·취소 등 어떤 실패든 임시 파일을 남기지 않는다.
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path, (upload.filename or "video.mp4")
 
 
 async def _run_analyze(

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CATEGORY_CHOICE_LABEL, type CategoryChoice } from "@/lib/api";
 import type { AnalyzeSource } from "@/lib/analyze";
-import { Dropzone } from "./Dropzone";
+import { Dropzone, MAX_MB } from "./Dropzone";
 import { ErrorBanner } from "./ErrorBanner";
 
 interface Props {
@@ -51,7 +51,7 @@ export function IdleForm({ disabled, lastError, onSubmit }: Props) {
 
       {lastError && (
         <ErrorBanner
-          title="이전 분석이 실패했습니다."
+          title="분석에 실패했습니다."
           message={lastError}
           className="mb-6 px-4 py-3"
         />
@@ -106,7 +106,7 @@ export function IdleForm({ disabled, lastError, onSubmit }: Props) {
             </span>
             <span className="text-[14.5px] font-semibold">영상 입력</span>
             <span className="ml-auto text-xs text-ink-4">
-              {mode === "file" ? "max 300MB" : "최대 10분"}
+              {mode === "file" ? `최대 ${MAX_MB}MB` : "최대 5분"}
             </span>
           </div>
 
@@ -241,7 +241,7 @@ function UrlInput({
         />
       )}
       <p className="mt-2.5 text-[12.5px] leading-[1.7] text-ink-4">
-        최대 10분 · youtube.com / youtu.be 링크
+        최대 5분 · youtube.com / youtu.be 링크
       </p>
     </>
   );

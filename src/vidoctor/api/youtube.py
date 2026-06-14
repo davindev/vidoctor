@@ -16,7 +16,9 @@ from vidoctor.errors import SafeError
 # 걸린다. 런타임에는 둘 다 안정적으로 존재 — 모듈 전체를 Any로 캐스팅해 좁히지 않는다.
 yt_dlp: Any = cast(Any, _yt_dlp)
 
-_MAX_DURATION_SEC = 600  # 10분 cap — web/IdleForm 안내 문구와 동기화
+# 유튜브는 길이가 메타데이터에 있어 다운로드 전 차단 가능 — 용량 대신 길이로 제한한다
+# (파일 업로드는 app.py에서 용량으로 제한). web/IdleForm "최대 5분" 표시와 동기화.
+_MAX_DURATION_SEC = 300
 
 # music.youtube.com, 라이브 스트림 페이지 등은 의도적 제외. 정밀 검증은 yt-dlp 위임.
 _HOST_PATTERN = re.compile(r"^https?://(www\.|m\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)
@@ -46,7 +48,9 @@ def _download_sync(url: str) -> tuple[Path, str]:
         "quiet": True,
         "no_warnings": True,
         "outtmpl": str(out_path),
-        "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+        # 720p로 상한 — bare /best 폴백을 두지 않아 ≤5분이어도 4K 등 수 GB를 받는 걸 막는다.
+        # ≤720p가 없으면 yt-dlp가 DownloadError를 던져 거부된다(고용량 다운로드보다 안전).
+        "format": "best[ext=mp4][height<=720]/best[height<=720]",
         "overwrites": True,
         "noplaylist": True,
         "socket_timeout": 30,  # 응답 hang 가드
@@ -59,6 +63,7 @@ def _download_sync(url: str) -> tuple[Path, str]:
             if info is None:
                 raise YouTubeIngestError("영상 정보를 가져오지 못했습니다.")
 
+            # 길이 미상(라이브 스트림 등)은 무한 다운로드 위험이라 거부.
             duration = int(info.get("duration") or 0)
             if duration <= 0:
                 raise YouTubeIngestError(

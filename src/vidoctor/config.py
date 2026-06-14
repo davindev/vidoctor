@@ -11,6 +11,9 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # scripts/·eval/·vision에서 import해서 사용 — 모듈 외부 public 상수.
 ROOT = Path(__file__).resolve().parents[2]
 
+# 파일 업로드 크기 상한(api/app.py). 유튜브 URL은 길이로 제한하므로(youtube.py) 무관.
+MAX_VIDEO_BYTES = 300 * 1024 * 1024  # 300MB, web/Dropzone MAX_BYTES와 동기화
+
 
 class Settings(BaseSettings):
     """OpenAI/Supabase/R2/Langfuse/MLflow 자격증명 + 호스트."""
