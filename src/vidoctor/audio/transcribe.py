@@ -1,12 +1,14 @@
 """WhisperX 기반 한국어 ASR + wav2vec2 forced alignment.
 
-ASR 모델로 텍스트 추출 후 wav2vec2로 단어 단위 ±20ms 정렬. 모델은 첫 호출 시 lazy
-load되어 프로세스 수명 동안 캐시. settings.whisper_model로 모델 swap (기본 large-v3-turbo).
+ASR 모델로 텍스트 추출 후 wav2vec2로 단어 단위 정렬. 모델은 첫 호출 시 lazy
+load되어 프로세스 수명 동안 캐시. settings.whisper_model로 모델 swap (기본 KsponSpeech).
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -14,10 +16,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 import whisperx
 
 from vidoctor.config import ROOT, get_settings
 from vidoctor.graph.state import Word
+
+_log = logging.getLogger(__name__)
 
 # 기본은 KsponSpeech fine-tuned. ROOT 기준이라 로컬·Docker 양쪽에서 해석된다.
 DEFAULT_MODEL_NAME = str(ROOT / "models" / "whisper-ko-ksponspeech-ct2")
@@ -32,7 +37,8 @@ def _resolve_runtime() -> tuple[str, str, int]:
     """
     if os.environ.get("VIDOCTOR_DEVICE") == "cuda":
         # 모델이 int8 양자화 저장이라 GPU도 int8로 맞춘다.
-        return "cuda", "int8", 24
+        # batch는 T4(16GB) OOM 여유를 위해 작게.
+        return "cuda", "int8", 8
     return "cpu", "int8", 16
 
 
@@ -71,25 +77,52 @@ def _load_models() -> _LoadedModels:
     )
 
 
-def _transcribe_sync(media_path: str) -> tuple[list[Word], np.ndarray]:
-    """파일 fast-fail 후 WhisperX ASR + wav2vec2 align → Word 리스트 + 16kHz mono."""
+def _free_gpu_memory() -> None:
+    """warm 재사용 컨테이너에서 분석 간 torch 캐시 누적을 끊는다.
+
+    ct2 ASR은 torch와 별개 allocator라 torch 캐시를 비워야 ct2가 쓸 여유가 생긴다.
+    단일 분석 peak(batch_size)와는 무관 — 누적 OOM 방지용.
+    """
+    if torch.cuda.is_available():
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """ct2가 OOM을 타입 없는 RuntimeError로 던져 메시지로만 판별 가능하다.
+
+    torch의 OutOfMemoryError도 RuntimeError 하위라 같은 분기로 걸린다.
+    """
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
+def _transcribe_sync(
+    media_path: str, batch_size: int | None = None
+) -> tuple[list[Word], np.ndarray]:
+    """파일 fast-fail 후 WhisperX ASR + wav2vec2 align → Word 리스트 + 16kHz mono.
+
+    batch_size override는 OOM 재시도에서 peak를 낮추기 위한 것.
+    """
     if not Path(media_path).exists():
         raise FileNotFoundError(f"미디어 파일 없음: {media_path}")
 
     models = _load_models()
     audio = whisperx.load_audio(media_path)
+    bs = batch_size if batch_size is not None else models.batch_size
 
-    asr_result = models.asr.transcribe(
-        audio, batch_size=models.batch_size, language=LANGUAGE
-    )
-    aligned = whisperx.align(
-        asr_result["segments"],
-        models.align_model,
-        models.align_metadata,
-        audio,
-        models.device,
-        return_char_alignments=False,
-    )
+    try:
+        asr_result = models.asr.transcribe(audio, batch_size=bs, language=LANGUAGE)
+        aligned = whisperx.align(
+            asr_result["segments"],
+            models.align_model,
+            models.align_metadata,
+            audio,
+            models.device,
+            return_char_alignments=False,
+        )
+    finally:
+        # OOM 실패 시에도 정리돼야 재시도가 깨끗한 메모리에서 시작한다.
+        _free_gpu_memory()
 
     words: list[Word] = []
     for segment in aligned.get("segments", []):
@@ -116,5 +149,14 @@ async def transcribe_video(media_path: str) -> tuple[list[Word], np.ndarray]:
 
     audio는 WhisperX가 이미 디코딩한 16kHz mono float32라 dead_zone VAD가 재사용 → ffmpeg
     호출 1회 절감. WhisperX 호출은 sync·CPU bound이라 to_thread로 이벤트 루프 차단 방지.
+
+    OOM은 batch를 절반으로 줄여 1회 재시도한다 — 같은 batch 재시도는 peak가 같아 무의미함.
     """
-    return await asyncio.to_thread(_transcribe_sync, media_path)
+    try:
+        return await asyncio.to_thread(_transcribe_sync, media_path)
+    except RuntimeError as e:
+        if not _is_cuda_oom(e):
+            raise
+        retry_bs = max(1, _load_models().batch_size // 2)
+        _log.warning("ASR GPU OOM — batch_size=%d로 낮춰 1회 재시도", retry_bs)
+        return await asyncio.to_thread(_transcribe_sync, media_path, retry_bs)
