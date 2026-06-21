@@ -17,7 +17,7 @@ from typing import Any
 
 import mlflow
 
-from vidoctor.audio.transcribe import transcribe_video
+from vidoctor.audio.transcribe import DEFAULT_MODEL_NAME, transcribe_video
 from vidoctor.config import ROOT, get_settings
 from vidoctor.eval.labels import GoldenLabel
 from vidoctor.eval.metrics import DimensionMetrics
@@ -93,10 +93,12 @@ def write_eval_dump(out_path: Path, data: dict, *, force: bool) -> None:
 
 
 def model_tag() -> str:
-    """WhisperX 모델별 캐시 키를 반환한다."""
-    model = get_settings().whisper_model
-    if not model:
-        return "default"
+    """WhisperX 모델별 캐시 키를 반환한다.
+
+    transcribe와 같은 기본값(DEFAULT_MODEL_NAME=KsponSpeech)으로 해석한다 — env 미설정 시
+    실제 전사는 KsponSpeech인데 태그만 'default'면 옛 다국어 캐시를 잘못 집기 때문.
+    """
+    model = get_settings().whisper_model or DEFAULT_MODEL_NAME
     return Path(model).name.replace("/", "_") or "default"
 
 
