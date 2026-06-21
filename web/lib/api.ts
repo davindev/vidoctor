@@ -93,20 +93,6 @@ export interface StepMetric {
   completion_tokens: number;
 }
 
-export interface SpeakerTurn {
-  start: number;
-  end: number;
-  speaker: string;
-  word_count: number;
-  text_preview: string;
-}
-
-export interface SpeakerDiarization {
-  main_speaker: string;
-  durations: Record<string, number>;
-  turns: SpeakerTurn[];
-}
-
 export interface AnalysisDetail {
   id: string;
   started_at: string | null;
@@ -120,7 +106,6 @@ export interface AnalysisDetail {
   failed_dimensions: Dimension[];
   suggestions: SuggestionItem[];
   step_metrics: StepMetric[];
-  speaker_diarization: SpeakerDiarization | null;
 }
 
 /** 5차원 색상 팔레트 — Analysis.html 디자인 토큰. issue table 좌측 dot + ts-time 색상. */

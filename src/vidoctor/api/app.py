@@ -184,24 +184,6 @@ class StepMetric(BaseModel):
     completion_tokens: int
 
 
-class SpeakerTurn(BaseModel):
-    """화자 분리 단위 발화 구간 (start~end + 화자 식별자 + 텍스트 미리보기)."""
-
-    start: float
-    end: float
-    speaker: str
-    word_count: int
-    text_preview: str
-
-
-class SpeakerDiarization(BaseModel):
-    """화자 분리 결과 — 주 화자 + 화자별 누적 시간 + turn 리스트."""
-
-    main_speaker: str
-    durations: dict[str, float]
-    turns: list[SpeakerTurn]
-
-
 class AnalysisDetail(BaseModel):
     """분석 상세 페이지 응답 — meta + findings + suggestions + step metrics."""
 
@@ -217,7 +199,6 @@ class AnalysisDetail(BaseModel):
     failed_dimensions: list[Dimension]
     suggestions: list[SuggestionItem]
     step_metrics: list[StepMetric]
-    speaker_diarization: SpeakerDiarization | None
 
 
 class VideoUrlResponse(BaseModel):
@@ -318,10 +299,6 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
     step_metrics = (
         [StepMetric(**step) for step in raw_steps] if isinstance(raw_steps, list) else []
     )
-    diarization_raw = metadata.get("speaker_diarization")
-    diarization = (
-        SpeakerDiarization(**diarization_raw) if diarization_raw else None
-    )
     # 경계 검증: 옛 스키마·오염 데이터(null·비리스트·미지의 차원 문자열)가 전체 응답을
     # 깨지 않도록 list가 아니면 빈 값으로, 알 수 없는 차원은 거부 대신 필터링한다.
     # 통과한 값은 Dimension Literal이라 UI 라벨 매핑이 항상 성립.
@@ -346,7 +323,6 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
         failed_dimensions=failed_dimensions,
         suggestions=suggestions,
         step_metrics=step_metrics,
-        speaker_diarization=diarization,
     )
 
 
