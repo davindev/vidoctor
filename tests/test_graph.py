@@ -3,12 +3,14 @@
 import numpy as np
 import pytest
 
+from vidoctor.errors import SafeError
 from vidoctor.graph import build_graph
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
     DIM_TO_STATE_FIELD,
     Category,
     Dimension,
+    Word,
 )
 from vidoctor.llm import LLMCallMetrics
 
@@ -20,8 +22,10 @@ def _stub_heavy_nodes(monkeypatch):
     실제 ASR/SSIM 동작은 모듈 단위 통합 테스트(tests/test_audio.py, test_dead_zone.py)에서 검증.
     """
 
-    async def _empty_words(_path: str):
-        return [], np.array([], dtype=np.float32)
+    async def _dummy_words(_path: str):
+        # 빈 transcript는 transcribe 게이트에서 SafeError로 막히므로 최소 단어 1개를 둔다.
+        # cps는 아래에서 stub하므로 audio 내용은 무관.
+        return [Word(text="테스트", start=1.0, end=1.4)], np.array([], dtype=np.float32)
 
     async def _empty_dead_zone(_path: str, _category, *, audio=None):
         return []
@@ -32,7 +36,12 @@ def _stub_heavy_nodes(monkeypatch):
     async def _empty_gaze(_path: str):
         return []
 
-    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _empty_words)
+    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _dummy_words)
+    # cps는 dummy transcript/audio로 실제 F0 추출을 돌리지 않도록 stub (토폴로지 검증 목적).
+    monkeypatch.setattr("vidoctor.audio.cps.detect_cps_anomalies", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "vidoctor.audio.cps.detect_cps_with_audio", lambda *a, **k: []
+    )
     monkeypatch.setattr(
         "vidoctor.vision.dead_zone.detect_dead_zone_events", _empty_dead_zone
     )
@@ -76,6 +85,19 @@ async def test_inactive_dimensions_are_not_in_state(
     )
     inactive_fields = {DIM_TO_STATE_FIELD[d] for d in inactive_dims}
     assert inactive_fields.isdisjoint(result.keys())
+
+
+async def test_empty_transcript_raises_no_speech(monkeypatch):
+    """음성이 없으면(빈 transcript) 빈 결과로 완료하지 않고 SafeError로 중단한다."""
+
+    async def _no_words(_path: str):
+        return [], np.array([], dtype=np.float32)
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _no_words)
+
+    g = build_graph()
+    with pytest.raises(SafeError):
+        await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
 
 
 async def test_detector_failure_is_isolated(monkeypatch):

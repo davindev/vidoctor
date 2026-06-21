@@ -19,11 +19,28 @@ from vidoctor.graph.state import AnalysisState
 
 _log = logging.getLogger(__name__)
 
+# 오디오 트랙 없는 영상은 whisperx의 ffmpeg가 이 문구가 든 RuntimeError를 던진다.
+_NO_AUDIO_MARKER = "does not contain any stream"
+# 무음·오디오 트랙 없음뿐 아니라 ASR 인식 실패도 포함하므로 '없다'고 단정하지 않는다.
+_NO_TRANSCRIPT_MSG = (
+    "영상에서 음성을 인식하지 못해 분석할 수 없습니다. 말소리가 또렷한 영상인지 확인해 주세요."
+)
+
 
 async def transcribe(state: AnalysisState) -> dict:
     from vidoctor.audio.transcribe import transcribe_video
+    from vidoctor.errors import SafeError
 
-    words, audio = await transcribe_video(state["video_path"])
+    try:
+        words, audio = await transcribe_video(state["video_path"])
+    except RuntimeError as e:
+        if _NO_AUDIO_MARKER in str(e):
+            raise SafeError(_NO_TRANSCRIPT_MSG) from e
+        raise
+    # 음성을 인식 못하면 음성 기반 차원(filler·cps·content_gap·dead_zone)이 무의미해진다.
+    # 빈 결과로 완료하면 '발견 0건'이 '완벽한 영상'으로 오인되므로 명시적으로 중단한다.
+    if not words:
+        raise SafeError(_NO_TRANSCRIPT_MSG)
     return {"transcript": words, "audio_16k": audio}
 
 
