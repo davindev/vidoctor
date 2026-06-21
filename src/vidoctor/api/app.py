@@ -233,12 +233,17 @@ class AnalyzeResponse(BaseModel):
 
 
 class AnalysisStatusResponse(BaseModel):
-    """폴링용 진행 상태 — status(analyzing|completed|failed) + 노드 진행률 + 에러."""
+    """폴링용 진행 상태 — status(analyzing|completed|failed) + 노드 진행률 + 에러.
+
+    started_at은 클라이언트가 경과 시간을 표시하는 데 쓴다 — 재접속·새로고침에도 서버
+    기준이라 일관된다.
+    """
 
     status: str | None
     category: str | None
     progress: dict[str, Any]
     error: str | None
+    started_at: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -600,5 +605,9 @@ async def get_status(request: Request, analysis_id: str) -> AnalysisStatusRespon
             await asyncio.to_thread(fail_analysis, analysis_id, s["video_id"], error)
 
     return AnalysisStatusResponse(
-        status=status, category=s["category"], progress=s["progress"], error=error
+        status=status,
+        category=s["category"],
+        progress=s["progress"],
+        error=error,
+        started_at=s["started_at"],
     )

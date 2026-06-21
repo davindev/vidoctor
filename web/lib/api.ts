@@ -68,6 +68,8 @@ export interface AnalysisStatus {
   category: Category | null;
   progress: { completed_nodes?: string[]; phase?: string };
   error: string | null;
+  /** 분석 시작 시각(ISO). 경과 시간 표시용 — 재접속해도 서버 기준이라 일관. */
+  started_at: string | null;
 }
 
 export interface FindingItem {

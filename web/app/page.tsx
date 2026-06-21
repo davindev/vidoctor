@@ -40,6 +40,8 @@ type AppState =
       completed: Set<string>;
       // POST 응답 전엔 null(업로드 중), 응답 후 채워지면 폴링이 시작된다.
       analysisId: string | null;
+      // 분석 시작 시각(ISO). 경과 시간 표시용 — 폴링이 서버 값으로 채운다.
+      startedAt: string | null;
     }
   | {
       kind: "failed";
@@ -90,6 +92,7 @@ export default function Home() {
         phase: pendingItem.filename ? "uploading" : "downloading",
         completed: new Set(),
         analysisId: null,
+        startedAt: pendingItem.started_at,
       });
       return;
     }
@@ -104,6 +107,7 @@ export default function Home() {
         phase: "running",
         completed: new Set(),
         analysisId: id,
+        startedAt: item.started_at,
       });
     } else if (item?.status === "failed") {
       // 실패 항목은 결과 화면(빈 검출) 대신 실패 사유를 보여준다.
@@ -157,6 +161,7 @@ export default function Home() {
       phase: initialPhase,
       completed: new Set(),
       analysisId: null,
+      startedAt: null,
     });
 
     try {
@@ -215,7 +220,12 @@ export default function Home() {
         setState((prev) =>
           prev.kind === "analyzing" && prev.analysisId === id
             ? // auto 분류 결과를 반영해 비활성 차원을 '건너뜀'으로 표시.
-              { ...prev, completed: new Set(nodes), category: s.category ?? prev.category }
+              {
+                ...prev,
+                completed: new Set(nodes),
+                category: s.category ?? prev.category,
+                startedAt: prev.startedAt ?? s.started_at,
+              }
             : prev,
         );
         if (s.status === "completed") {
@@ -303,6 +313,7 @@ export default function Home() {
             filename={state.filename}
             phase={state.phase}
             completed={state.completed}
+            startedAt={state.startedAt}
           />
         )}
         {state.kind === "failed" && (
