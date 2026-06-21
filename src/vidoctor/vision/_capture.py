@@ -26,12 +26,22 @@ def open_capture(video_path: str) -> Iterator[cv2.VideoCapture]:
         cap.release()
 
 
-def probe_duration_sec(video_path: str) -> float:
-    """영상 길이(초). frame_count/fps. 메타가 없어 알 수 없으면 0.0 — 호출자가 판단."""
+def probe_video(video_path: str) -> float:
+    """업로드 영상을 디코딩 검증하고 길이(초)를 반환한다.
+
+    확장자만으로는 실제 디코딩 여부를 알 수 없어(텍스트·오디오 전용·이미지를 .mp4로
+    위장하거나 손상된 파일) 직접 열어 확인한다. open 실패(텍스트·오디오·손상)는
+    open_capture가 RuntimeError, 열리지만 2프레임을 못 읽으면(단일 이미지 등) ValueError.
+    길이는 frame_count/fps, 메타가 garbage/부재면 0.0(호출자가 판단).
+    """
     with open_capture(video_path) as cap:
+        ok1, _ = cap.read()
+        ok2, _ = cap.read()
+        if not (ok1 and ok2):
+            raise ValueError(f"디코딩 가능한 비디오 프레임이 없음: {video_path}")
         fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
         frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
-        return frame_count / fps if fps > 0 else 0.0
+        return frame_count / fps if fps > 0 and frame_count > 0 else 0.0
 
 
 def encode_frame_jpeg(

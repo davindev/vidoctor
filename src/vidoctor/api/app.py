@@ -57,7 +57,7 @@ from vidoctor.repository import (
     list_analyses,
     upload_video_file,
 )
-from vidoctor.vision._capture import probe_duration_sec
+from vidoctor.vision._capture import probe_video
 from vidoctor.vision.category_classifier import classify_category
 
 _log = logging.getLogger(__name__)
@@ -439,9 +439,16 @@ async def _run_analyze(
                 # endpoint XOR 검증이 빠졌을 때만 닿는 invariant 위반.
                 raise RuntimeError("upload·url XOR invariant 위반")
             tmp_path, filename = await _save_upload_to_tmp(upload)
-            # 유튜브와 대칭으로 파일도 길이 검증 — 범위 밖 영상은 R2 업로드 전에 거른다.
+            # 확장자만으로는 실제 영상인지 알 수 없어 직접 디코딩 검증 + 길이 측정.
+            # MIME/content-type은 위조 가능·불안정해 신뢰하지 않고, 실제 디코딩으로 판정한다.
+            try:
+                duration = await asyncio.to_thread(probe_video, str(tmp_path))
+            except (RuntimeError, ValueError) as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail="지원하지 않는 영상 형식이거나 파일이 손상되어 분석할 수 없습니다.",
+                ) from e
             # 길이 미상(0)은 통과시킨다(드물고, Modal self-timeout이 backstop).
-            duration = await asyncio.to_thread(probe_duration_sec, str(tmp_path))
             if duration > MAX_VIDEO_DURATION_SEC:
                 max_min = MAX_VIDEO_DURATION_SEC // 60
                 raise HTTPException(
