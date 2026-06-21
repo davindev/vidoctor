@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AnalyzingView } from "@/components/AnalyzingView";
+import { FailedView } from "@/components/FailedView";
 import { IdleForm } from "@/components/IdleForm";
 import { ResultView } from "@/components/ResultView";
 import { Sidebar } from "@/components/Sidebar";
@@ -21,9 +22,9 @@ import {
 
 // 시드된 샘플 분석 2건 — 사용자가 삭제하지 못하도록 삭제 UI를 숨긴다.
 // 그 외 영상은 사용자가 직접 올린 것이라 삭제 가능.
-const SAMPLE_ANALYSIS_IDS = new Set([
-  "c4c1d512-764a-4b94-8db7-021c3e21252a",
-  "f8273e11-4286-42c9-8ef3-8f79e368a85b",
+const SAMPLE_ANALYSIS_IDS = new Set<string>([
+  // "c4c1d512-764a-4b94-8db7-021c3e21252a",
+  // "f8273e11-4286-42c9-8ef3-8f79e368a85b",
 ]);
 
 // 진행 상태 폴링 간격(ms) — 진행률(상세)·목록 폴링 공통.
@@ -37,8 +38,14 @@ type AppState =
       filename: string | null;
       phase: AnalyzingPhase;
       completed: Set<string>;
-      errorMessage: string | null;
       // POST 응답 전엔 null(업로드 중), 응답 후 채워지면 폴링이 시작된다.
+      analysisId: string | null;
+    }
+  | {
+      kind: "failed";
+      category: Category | null;
+      filename: string | null;
+      errorMessage: string;
       analysisId: string | null;
     }
   | { kind: "result"; analysisId: string };
@@ -82,7 +89,6 @@ export default function Home() {
         filename: pendingItem.filename,
         phase: pendingItem.filename ? "uploading" : "downloading",
         completed: new Set(),
-        errorMessage: null,
         analysisId: null,
       });
       return;
@@ -97,7 +103,15 @@ export default function Home() {
         filename: item.filename ?? basename(item.storage_path),
         phase: "running",
         completed: new Set(),
-        errorMessage: null,
+        analysisId: id,
+      });
+    } else if (item?.status === "failed") {
+      // 실패 항목은 결과 화면(빈 검출) 대신 실패 사유를 보여준다.
+      setState({
+        kind: "failed",
+        category: item.category,
+        filename: item.filename ?? basename(item.storage_path),
+        errorMessage: item.error ?? "분석에 실패했습니다.",
         analysisId: id,
       });
     } else {
@@ -142,7 +156,6 @@ export default function Home() {
       filename: initialFilename,
       phase: initialPhase,
       completed: new Set(),
-      errorMessage: null,
       analysisId: null,
     });
 
@@ -215,7 +228,13 @@ export default function Home() {
           stopped = true;
           setState((prev) =>
             prev.kind === "analyzing" && prev.analysisId === id
-              ? { ...prev, errorMessage: s.error ?? "분석에 실패했습니다." }
+              ? {
+                  kind: "failed",
+                  category: prev.category,
+                  filename: prev.filename,
+                  errorMessage: s.error ?? "분석에 실패했습니다.",
+                  analysisId: id,
+                }
               : prev,
           );
           void refreshHistory();
@@ -251,7 +270,9 @@ export default function Home() {
       ? state.analysisId
       : state.kind === "analyzing"
         ? (state.analysisId ?? pendingItem?.id ?? null)
-        : null;
+        : state.kind === "failed"
+          ? state.analysisId
+          : null;
   // 업로드 중(서버 row 생성 전)에는 낙관적 항목을 사이드바 맨 위에 끼워 보여준다.
   const sidebarItems = pendingItem ? [pendingItem, ...items] : items;
   // 분석이 연결과 분리돼 백그라운드에서 도므로 진행 중에도 사이드바 이동을 막지 않는다.
@@ -282,7 +303,14 @@ export default function Home() {
             filename={state.filename}
             phase={state.phase}
             completed={state.completed}
+          />
+        )}
+        {state.kind === "failed" && (
+          <FailedView
+            category={state.category}
+            filename={state.filename}
             errorMessage={state.errorMessage}
+            onNewAnalysis={handleNewAnalysis}
           />
         )}
         {state.kind === "result" && (

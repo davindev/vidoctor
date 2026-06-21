@@ -8,7 +8,6 @@ import {
   type Dimension,
 } from "@/lib/api";
 import type { AnalyzingPhase } from "@/lib/analyze";
-import { ErrorBanner } from "./ErrorBanner";
 
 type NodeState = "waiting" | "active" | "done" | "skipped";
 
@@ -27,7 +26,6 @@ interface Props {
   category: Category | null;
   phase: AnalyzingPhase;
   completed: Set<string>;
-  errorMessage: string | null;
 }
 
 // branch 좌표 — viewBox 360 기준 N+1 분할로 derive해 노드 추가/제거 시 한 곳만 갱신.
@@ -100,12 +98,7 @@ function progressStep(s: ReturnType<typeof deriveStates>): number {
   return 1;
 }
 
-export function Pipeline({
-  category,
-  phase,
-  completed,
-  errorMessage,
-}: Props) {
+export function Pipeline({ category, phase, completed }: Props) {
   const states = deriveStates(category, phase, completed);
   const step = progressStep(states);
   // 첫 노드는 download → classify → upload 세 가지 사전 단계를 모두 흡수해 표시.
@@ -205,14 +198,6 @@ export function Pipeline({
           state={states.suggest}
         />
       </div>
-
-      {errorMessage && (
-        <ErrorBanner
-          icon={false}
-          message={`분석 실패: ${errorMessage}`}
-          className="mt-5"
-        />
-      )}
     </section>
   );
 }
