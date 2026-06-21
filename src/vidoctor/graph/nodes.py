@@ -15,7 +15,11 @@
 import asyncio
 import logging
 
-from vidoctor.graph.state import AnalysisState
+from vidoctor.graph.state import (
+    CATEGORY_DIMENSIONS,
+    TRANSCRIPT_DEPENDENT_DIMENSIONS,
+    AnalysisState,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -31,6 +35,17 @@ _FOREIGN_MSG = "한국어 음성만 분석할 수 있습니다. 한국어 영상
 _LANG_MIN_CONFIDENCE = 0.5
 
 
+def _transcript_unavailable(state: AnalysisState) -> dict:
+    """전사 크래시 시 전사 의존 차원만 실패로 표시하고 빈 transcript로 진행한다.
+
+    gaze(영상)·dead_zone(오디오 VAD)은 전사 없이도 검출 가능하므로 그래프는 계속 돈다.
+    audio_16k는 설정하지 않아 dead_zone이 직접 재디코딩하게 둔다(전사가 디코딩한 신호 없음).
+    """
+    active = CATEGORY_DIMENSIONS[state["category"]]
+    failed = [d for d in active if d in TRANSCRIPT_DEPENDENT_DIMENSIONS]
+    return {"transcript": [], "failed_dimensions": failed}
+
+
 async def transcribe(state: AnalysisState) -> dict:
     from vidoctor.audio.transcribe import LANGUAGE, detect_language, transcribe_video
     from vidoctor.errors import SafeError
@@ -41,10 +56,15 @@ async def transcribe(state: AnalysisState) -> dict:
         lang, lang_prob = await detect_language(audio)
         if lang != LANGUAGE and lang_prob >= _LANG_MIN_CONFIDENCE:
             raise SafeError(_FOREIGN_MSG)
-    except RuntimeError as e:
-        if _NO_AUDIO_MARKER in str(e):
+    except SafeError:
+        raise  # 무음·외국어 게이트는 의도적 전체 실패 — 격리 대상 아님.
+    except Exception as e:  # noqa: BLE001
+        if isinstance(e, RuntimeError) and _NO_AUDIO_MARKER in str(e):
             raise SafeError(_NO_TRANSCRIPT_MSG) from e
-        raise
+        # 그 외 전사 크래시(ASR·정렬 내부 오류 등)는 전체를 죽이지 않고 격리 —
+        # 전사 의존 차원만 실패 처리하고 gaze·dead_zone은 진행한다.
+        _log.exception("전사 실패 — 전사 의존 차원 격리 후 진행")
+        return _transcript_unavailable(state)
     # 음성을 인식 못하면 음성 기반 차원(filler·cps·content_gap·dead_zone)이 무의미해진다.
     # 빈 결과로 완료하면 '발견 0건'이 '완벽한 영상'으로 오인되므로 명시적으로 중단한다.
     if not words:

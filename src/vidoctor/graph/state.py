@@ -41,6 +41,12 @@ CATEGORY_DIMENSIONS: dict[Category, tuple[Dimension, ...]] = {
     "other": ("filler", "cps", "dead_zone", "content_gap"),
 }
 
+# 전사 텍스트가 있어야 의미 있는 차원. 전사가 실패하면 이들만 무력해지고, gaze(영상)·
+# dead_zone(오디오 VAD)는 전사와 무관하게 검출 가능하다 — 전사 단일 실패점을 부분 생존으로.
+TRANSCRIPT_DEPENDENT_DIMENSIONS: frozenset[Dimension] = frozenset(
+    {"filler", "cps", "content_gap"}
+)
+
 
 class Word(BaseModel):
     """WhisperX 단어 단위 타임스탬프."""

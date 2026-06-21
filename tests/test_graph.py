@@ -130,6 +130,25 @@ async def test_low_confidence_language_passes(monkeypatch):
     assert "transcript" in result  # 게이트 통과 → 정상 진행
 
 
+async def test_transcribe_crash_isolates_transcript_dims(monkeypatch):
+    """전사가 크래시하면(SafeError 아님) 전체가 죽지 않고, 전사 의존 차원만 실패로
+    표시되며 gaze·dead_zone은 진행한다."""
+
+    async def _boom(_path: str):
+        raise RuntimeError("ASR 내부 오류")  # no-audio 마커 없음 → 크래시 격리 경로
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _boom)
+
+    g = build_graph()
+    result = await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
+
+    # 전사 의존 차원만 실패, gaze·dead_zone은 진행(필드 존재).
+    assert set(result["failed_dimensions"]) == {"filler", "cps", "content_gap"}
+    assert result["transcript"] == []
+    assert "gaze_issues" in result
+    assert "dead_zones" in result
+
+
 async def test_detector_failure_is_isolated(monkeypatch):
     """한 차원 detector가 던져도 run이 죽지 않고, 나머지 차원·제안은 보존된다."""
 

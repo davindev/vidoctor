@@ -403,6 +403,10 @@ async def detect_content_gap_events(
 
     LLMCallMetrics는 영상당 총 비용·latency 누적용으로 graph 노드가 state에 push.
     """
+    # 불일치 시점을 ASR 발화 시각에 anchor하므로 전사 없이는 무의미하다. 빈 transcript면
+    # 프레임 샘플링·LLM 호출 없이 즉시 종료(전사 실패 시 LLM 비용 낭비 방지).
+    if not transcript:
+        return [], LLMCallMetrics.empty("content_gap", _MODEL)
     samples = _sample_frames(video_path, transcript)
     if not samples:
         return [], LLMCallMetrics.empty("content_gap", _MODEL)
