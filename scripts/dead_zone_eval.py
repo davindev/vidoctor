@@ -144,7 +144,7 @@ def main() -> None:
         "--flow-threshold",
         type=float,
         default=None,
-        help="flow median 임계. 이하이면 정적 (기본: lecture 0.5, vlog/other 5.0)",
+        help="flow median 임계. 이하이면 정적 (기본: lecture 1.0, vlog/other 5.0)",
     )
     args = parser.parse_args()
     configure_eval_logging(args.run_name)

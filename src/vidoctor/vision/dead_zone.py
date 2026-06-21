@@ -32,18 +32,25 @@ class _CategoryConfig:
     flow_max_threshold: float
 
 
-# 라벨 표본 분리 sweet spot:
-#   lecture: TP 0.32 / 페이스캠 FP 0.98 → 임계 0.5
-#   vlog:    TP 2.3·3.4 / FP_가짜 21.6 → 임계 5.0
+# flow median 분리 sweet spot (480p 기준):
+#   lecture: 정적 라벨 0.58 / 페이스캠 움직임 1.61 → 임계 1.0
+#   vlog:    정적 라벨 ~3.0 / 움직이는 구간 36+ → 임계 5.0
 #   other:   라벨 없음 — vlog 기준 보수적
 CATEGORY_CONFIG: dict[Category, _CategoryConfig] = {
-    "lecture": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=0.5),
+    "lecture": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=1.0),
     "vlog": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=5.0),
     "other": _CategoryConfig(min_duration_sec=5.0, flow_max_threshold=5.0),
 }
 
 FRAME_SAMPLE_FPS = 2.0
-DOWNSAMPLE_HEIGHT = 240
+# 페이스캠은 화면의 1~5%라 480p는 돼야 그 움직임이 flow에 해상된다 — 더 낮으면 얼굴이
+# 뭉개져 정적 구간과 flow 크기가 구분되지 않는다. 고정 높이라 영상 해상도가 달라도 flow
+# 크기가 정규화돼 카테고리 임계를 이식할 수 있다.
+DOWNSAMPLE_HEIGHT = 480
+
+# Farneback flow는 프레임 테두리에서 리사이즈 보간 잡음으로 가짜 벡터를 만든다(per-frame
+# max가 실제 움직임 대신 이 값을 집는 오염). max 계산 전 바깥 테두리를 잘라낸다.
+_FLOW_EDGE_CROP_PX = 3
 
 VAD_SAMPLE_RATE = 16000
 VAD_MIN_SILENCE_MS = 1000
@@ -156,6 +163,10 @@ def flow_series(video_path: str) -> tuple[np.ndarray, np.ndarray, float]:
                     _FARNEBACK_FLAGS,
                 )
                 mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
+                # 테두리 잡음 제외 후 per-frame max.
+                crop = _FLOW_EDGE_CROP_PX
+                if mag.shape[0] > 2 * crop and mag.shape[1] > 2 * crop:
+                    mag = mag[crop:-crop, crop:-crop]
                 curr_times.append(curr_time)
                 flows.append(float(mag.max()))
 
