@@ -321,7 +321,9 @@ export default function Home() {
             category={state.category}
             filename={state.filename}
             errorMessage={state.errorMessage}
+            analysisId={state.analysisId}
             onNewAnalysis={handleNewAnalysis}
+            onDeleted={handleDeleted}
           />
         )}
         {state.kind === "result" && (
