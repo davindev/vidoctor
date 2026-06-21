@@ -389,6 +389,10 @@ async def complete_analysis(
     step_metrics = state.get("step_metrics", []) or []
     total_cost = sum(m.cost_usd for m in step_metrics)
     merged_metadata: dict[str, Any] = dict(metadata or {})
+    failed_dimensions = state.get("failed_dimensions", []) or []
+    if failed_dimensions:
+        # add reducer는 concat만 해 중복이 쌓일 수 있어 dedup(등장 순서 유지).
+        merged_metadata["failed_dimensions"] = list(dict.fromkeys(failed_dimensions))
     if step_metrics:
         merged_metadata["step_metrics"] = [
             {

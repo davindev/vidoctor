@@ -137,6 +137,10 @@ class AnalysisState(TypedDict):
 
     suggestions: NotRequired[list[Suggestion]]
 
+    # _isolate가 채우는 검출 실패 차원. fan-out된 detector들이 동시에 쓸 수 있어
+    # 기본 replace 채널이면 InvalidUpdateError가 나므로 step_metrics처럼 add로 concat.
+    failed_dimensions: NotRequired[Annotated[list[Dimension], add]]
+
     # LLM 호출 비용·latency 누적. operator.add reducer로 여러 LLM 노드가 각자 list를
     # 반환해도 LangGraph가 자동 concat. 영상당 총 비용은 합산해 산출.
     step_metrics: NotRequired[Annotated[list[LLMCallMetrics], add]]

@@ -128,6 +128,23 @@ export function ResultView({ analysisId, deletable, onDeleted }: Props) {
   const issuesWithFindings = DIMENSION_ORDER.filter(
     (d) => (detail.findings[d]?.length ?? 0) > 0,
   );
+  // 검출 실패 차원 — 결과 부재가 아니라 '분석 못 함'이므로 별도 표시. 실패 차원이
+  // findings에도 잡혔다면(부분 결과) 정상 행 우선, 중복 표시 방지.
+  const failedDims = (detail.failed_dimensions ?? []).filter(
+    (d) => (detail.findings[d]?.length ?? 0) === 0,
+  );
+  const hasIssueRows = issuesWithFindings.length > 0 || failedDims.length > 0;
+  // 부제는 상태별로 분기 — 검출 결과가 0건일 때 '클릭 시 이동' 안내(클릭할 행이 없음)나
+  // '0개 차원의 검출 결과'(전부 실패를 정상으로 오인) 문구가 나오지 않도록 한다.
+  const issueSubtitle =
+    issuesWithFindings.length > 0
+      ? `${issuesWithFindings.length}개 차원의 자동 검출 결과 · 클릭 시 해당 구간으로 이동합니다.` +
+        (failedDims.length > 0
+          ? ` · ${failedDims.length}개 차원은 분석에 실패했습니다.`
+          : "")
+      : failedDims.length > 0
+        ? `${failedDims.length}개 차원이 분석에 실패했고, 검출된 이슈는 없습니다.`
+        : "검출된 이슈가 없습니다.";
 
   return (
     <ResultPage>
@@ -201,25 +218,34 @@ export function ResultView({ analysisId, deletable, onDeleted }: Props) {
             <div className="text-[15px] font-semibold tracking-[-0.01em]">
               이슈 목록
             </div>
-            <div className="mt-1 text-xs text-ink-4">
-              {issuesWithFindings.length}개 차원의 자동 검출 결과 · 클릭 시 해당
-              구간으로 이동합니다.
-            </div>
+            <div className="mt-1 text-xs text-ink-4">{issueSubtitle}</div>
           </div>
 
           <div className="flex flex-col gap-1 px-[18px] pb-[18px] pt-1.5">
-            {issuesWithFindings.length === 0 ? (
+            {!hasIssueRows ? (
               <div className="px-1 py-3.5 text-sm text-ink-4">검출된 이슈 없음.</div>
             ) : (
-              issuesWithFindings.map((dim, i) => (
-                <IssueRow
-                  key={dim}
-                  dim={dim}
-                  events={detail.findings[dim] ?? []}
-                  onSeek={seekTo}
-                  isLast={i === issuesWithFindings.length - 1}
-                />
-              ))
+              <>
+                {issuesWithFindings.map((dim, i) => (
+                  <IssueRow
+                    key={dim}
+                    dim={dim}
+                    events={detail.findings[dim] ?? []}
+                    onSeek={seekTo}
+                    isLast={
+                      failedDims.length === 0 &&
+                      i === issuesWithFindings.length - 1
+                    }
+                  />
+                ))}
+                {failedDims.map((dim, i) => (
+                  <FailedIssueRow
+                    key={dim}
+                    dim={dim}
+                    isLast={i === failedDims.length - 1}
+                  />
+                ))}
+              </>
             )}
           </div>
         </section>
@@ -373,6 +399,29 @@ function IssueRow({
               </span>
             </button>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FailedIssueRow({ dim, isLast }: { dim: Dimension; isLast: boolean }) {
+  return (
+    <div
+      className={`grid grid-cols-[16px_1fr] gap-3 py-3.5 px-1 ${
+        isLast ? "" : "border-b border-line"
+      }`}
+    >
+      <span className="mt-[6px] h-2 w-2 rounded-full border border-ink-4" />
+      <div className="min-w-0">
+        <div className="mb-0.5 flex items-baseline gap-2 text-[13.5px] font-medium text-ink-3">
+          <span>{DIMENSION_LABEL[dim]}</span>
+          <span className="rounded-full bg-[#FBEFEB] px-2 py-[1px] text-[10.5px] font-medium text-danger">
+            분석 실패
+          </span>
+        </div>
+        <div className="text-xs leading-[1.5] text-ink-4">
+          이 차원은 분석 중 오류로 검출하지 못했습니다. 다른 차원 결과는 정상입니다.
         </div>
       </div>
     </div>

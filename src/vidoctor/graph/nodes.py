@@ -13,8 +13,11 @@
 """
 
 import asyncio
+import logging
 
 from vidoctor.graph.state import AnalysisState
+
+_log = logging.getLogger(__name__)
 
 
 async def transcribe(state: AnalysisState) -> dict:
@@ -82,5 +85,10 @@ async def detect_content_gap(state: AnalysisState) -> dict:
 async def generate_suggestions(state: AnalysisState) -> dict:
     from vidoctor.suggestions import build_suggestions
 
-    suggestions, metrics = await build_suggestions(state)
-    return {"suggestions": suggestions, "step_metrics": [metrics]}
+    # 최종 노드라 여기서 예외가 나면 앞서 검출된 finding까지 통째로 유실된다 — 격리.
+    try:
+        suggestions, metrics = await build_suggestions(state)
+        return {"suggestions": suggestions, "step_metrics": [metrics]}
+    except Exception:
+        _log.exception("개선 제안 생성 실패 — 검출 결과는 보존")
+        return {"suggestions": []}

@@ -78,6 +78,41 @@ async def test_inactive_dimensions_are_not_in_state(
     assert inactive_fields.isdisjoint(result.keys())
 
 
+async def test_detector_failure_is_isolated(monkeypatch):
+    """한 차원 detector가 던져도 run이 죽지 않고, 나머지 차원·제안은 보존된다."""
+
+    async def _boom_gaze(_path: str):
+        raise RuntimeError("MediaPipe 폭발")
+
+    monkeypatch.setattr("vidoctor.vision.gaze.detect_gaze_events", _boom_gaze)
+
+    g = build_graph()
+    result = await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
+
+    # gaze는 실패로 격리되고, 나머지 차원 필드와 제안은 정상 생성.
+    assert result["failed_dimensions"] == ["gaze"]
+    assert result["gaze_issues"] == []
+    assert "suggestions" in result
+    for dim in ("filler", "cps", "dead_zone", "content_gap"):
+        assert DIM_TO_STATE_FIELD[dim] in result
+
+
+async def test_suggestions_failure_preserves_findings(monkeypatch):
+    """제안 생성이 던져도 검출 결과는 유실되지 않는다."""
+
+    async def _boom_suggestions(_state):
+        raise RuntimeError("제안 LLM 폭발")
+
+    monkeypatch.setattr("vidoctor.suggestions.build_suggestions", _boom_suggestions)
+
+    g = build_graph()
+    result = await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "vlog"})
+
+    assert result["suggestions"] == []
+    for dim in ("filler", "cps", "dead_zone"):
+        assert DIM_TO_STATE_FIELD[dim] in result
+
+
 async def test_stream_yields_active_node_chunks():
     g = build_graph()
     nodes_seen: set[str] = set()

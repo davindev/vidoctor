@@ -115,6 +115,7 @@ export interface AnalysisDetail {
   duration_sec: number | null;
   filename: string | null;
   findings: Record<Dimension, FindingItem[]>;
+  failed_dimensions: Dimension[];
   suggestions: SuggestionItem[];
   step_metrics: StepMetric[];
   speaker_diarization: SpeakerDiarization | null;

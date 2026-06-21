@@ -30,6 +30,7 @@ from vidoctor.graph import Category
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
     DIM_TO_STATE_FIELD,
+    Dimension,
 )
 from vidoctor.llm import LLMCallMetrics
 from vidoctor.log_setup import configure_logging
@@ -207,6 +208,7 @@ class AnalysisDetail(BaseModel):
     duration_sec: float | None
     filename: str | None
     findings: dict[str, list[FindingItem]]
+    failed_dimensions: list[Dimension]
     suggestions: list[SuggestionItem]
     step_metrics: list[StepMetric]
     speaker_diarization: SpeakerDiarization | None
@@ -300,10 +302,24 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
     ]
 
     metadata = cast(dict[str, Any], meta.get("metadata") or {})
-    step_metrics = [StepMetric(**step) for step in metadata.get("step_metrics", [])]
+    # failed_dimensions와 동일한 경계 검증 — null·비리스트 오염값이 응답을 깨지 않도록.
+    raw_steps = metadata.get("step_metrics")
+    step_metrics = (
+        [StepMetric(**step) for step in raw_steps] if isinstance(raw_steps, list) else []
+    )
     diarization_raw = metadata.get("speaker_diarization")
     diarization = (
         SpeakerDiarization(**diarization_raw) if diarization_raw else None
+    )
+    # 경계 검증: 옛 스키마·오염 데이터(null·비리스트·미지의 차원 문자열)가 전체 응답을
+    # 깨지 않도록 list가 아니면 빈 값으로, 알 수 없는 차원은 거부 대신 필터링한다.
+    # 통과한 값은 Dimension Literal이라 UI 라벨 매핑이 항상 성립.
+    raw_failed = metadata.get("failed_dimensions")
+    # d in DIM_TO_STATE_FIELD 가드가 통과 값을 유효 Dimension으로 보장하므로 cast가 안전.
+    failed_dimensions: list[Dimension] = (
+        [cast(Dimension, d) for d in raw_failed if d in DIM_TO_STATE_FIELD]
+        if isinstance(raw_failed, list)
+        else []
     )
 
     return AnalysisDetail(
@@ -316,6 +332,7 @@ async def get_analysis(analysis_id: str) -> AnalysisDetail:
         duration_sec=video_meta.get("duration_sec") if video_meta else None,
         filename=video_meta.get("filename") if video_meta else None,
         findings=findings,
+        failed_dimensions=failed_dimensions,
         suggestions=suggestions,
         step_metrics=step_metrics,
         speaker_diarization=diarization,
