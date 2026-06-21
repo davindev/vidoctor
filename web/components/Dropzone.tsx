@@ -7,6 +7,8 @@ import { ErrorBanner } from "./ErrorBanner";
 const MAX_BYTES = 300 * 1024 * 1024;
 /** 업로드 용량 상한(MB) — 메시지·안내 문구의 단일 출처. 백엔드 config.MAX_VIDEO_BYTES와 동기화. */
 export const MAX_MB = MAX_BYTES / (1024 * 1024);
+/** 영상 길이 상한(분) — 백엔드 config.MAX_VIDEO_DURATION_SEC(300s)와 동기화. */
+export const MAX_MINUTES = 5;
 const ALLOWED_EXT = ["mp4", "mov", "mpeg4"];
 
 interface Props {
@@ -26,12 +28,34 @@ function validate(f: File): string | null {
   return null;
 }
 
+/** 영상 길이(초). 메타 로드 실패·길이 미상·로드 지연이면 null — 서버가 backstop이므로 통과. */
+function readDurationSec(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    let timer: ReturnType<typeof setTimeout>;
+    const done = (d: number | null) => {
+      clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      resolve(d);
+    };
+    // 일부 코덱/백그라운드 탭은 onloadedmetadata·onerror가 모두 안 올 수 있어, 무한 대기
+    // (파일이 조용히 안 받아짐)를 막는 타임아웃 — 미상으로 처리해 서버 검증에 맡긴다.
+    timer = setTimeout(() => done(null), 5000);
+    video.onloadedmetadata = () =>
+      done(Number.isFinite(video.duration) ? video.duration : null);
+    video.onerror = () => done(null);
+    video.src = url;
+  });
+}
+
 export function Dropzone({ file, disabled, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleFile = (f: File | null) => {
+  const handleFile = async (f: File | null) => {
     if (!f) {
       onChange(null);
       setError(null);
@@ -40,6 +64,13 @@ export function Dropzone({ file, disabled, onChange }: Props) {
     const err = validate(f);
     if (err) {
       setError(err);
+      onChange(null);
+      return;
+    }
+    // 길이는 메타 로드가 필요해 비동기 — 너무 길면 큰 파일을 업로드하기 전에 막는다.
+    const dur = await readDurationSec(f);
+    if (dur !== null && dur > MAX_MINUTES * 60) {
+      setError(`영상이 너무 깁니다. 최대 ${MAX_MINUTES}분까지 분석할 수 있습니다.`);
       onChange(null);
       return;
     }
@@ -65,7 +96,7 @@ export function Dropzone({ file, disabled, onChange }: Props) {
     e.stopPropagation();
     setDragging(false);
     if (file || disabled) return;
-    handleFile(e.dataTransfer.files?.[0] ?? null);
+    void handleFile(e.dataTransfer.files?.[0] ?? null);
   };
 
   return (
@@ -115,7 +146,7 @@ export function Dropzone({ file, disabled, onChange }: Props) {
             파일을 끌어다 놓거나 <span className="font-semibold text-ink">파일 선택</span>
           </div>
           <div className="text-[12.5px] leading-[1.7] text-ink-4">
-            최대 {MAX_MB}MB · 지원 확장자 mp4, mov, mpeg4
+            최대 {MAX_MB}MB · 최대 {MAX_MINUTES}분 · 지원 확장자 mp4, mov, mpeg4
           </div>
         </div>
       )}

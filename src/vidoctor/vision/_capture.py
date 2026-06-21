@@ -26,6 +26,14 @@ def open_capture(video_path: str) -> Iterator[cv2.VideoCapture]:
         cap.release()
 
 
+def probe_duration_sec(video_path: str) -> float:
+    """영상 길이(초). frame_count/fps. 메타가 없어 알 수 없으면 0.0 — 호출자가 판단."""
+    with open_capture(video_path) as cap:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        return frame_count / fps if fps > 0 else 0.0
+
+
 def encode_frame_jpeg(
     frame: cv2.typing.MatLike, *, max_height: int, quality: int
 ) -> str:

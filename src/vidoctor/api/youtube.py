@@ -10,15 +10,15 @@ from typing import Any, cast
 
 import yt_dlp as _yt_dlp
 
+from vidoctor.config import MAX_VIDEO_DURATION_SEC
 from vidoctor.errors import SafeError
 
 # 모듈 stubs가 일부만 typed라 dict[str, object] params·DownloadError 접근에서 pyright가
 # 걸린다. 런타임에는 둘 다 안정적으로 존재 — 모듈 전체를 Any로 캐스팅해 좁히지 않는다.
 yt_dlp: Any = cast(Any, _yt_dlp)
 
-# 유튜브는 길이가 메타데이터에 있어 다운로드 전 차단 가능 — 용량 대신 길이로 제한한다
-# (파일 업로드는 app.py에서 용량으로 제한). web/IdleForm "최대 5분" 표시와 동기화.
-_MAX_DURATION_SEC = 300
+# 유튜브는 길이가 메타데이터에 있어 다운로드 전 차단 가능. 파일 업로드와 같은 길이 상한 공유.
+_MAX_DURATION_SEC = MAX_VIDEO_DURATION_SEC
 
 # music.youtube.com, 라이브 스트림 페이지 등은 의도적 제외. 정밀 검증은 yt-dlp 위임.
 _HOST_PATTERN = re.compile(r"^https?://(www\.|m\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE)

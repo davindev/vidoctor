@@ -11,8 +11,12 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # scripts/·eval/·vision에서 import해서 사용 — 모듈 외부 public 상수.
 ROOT = Path(__file__).resolve().parents[2]
 
-# 파일 업로드 크기 상한(api/app.py). 유튜브 URL은 길이로 제한하므로(youtube.py) 무관.
-MAX_VIDEO_BYTES = 300 * 1024 * 1024  # 300MB, web/Dropzone MAX_BYTES와 동기화
+# 파일 업로드 크기 상한(api/app.py). web/Dropzone MAX_BYTES와 동기화.
+MAX_VIDEO_BYTES = 300 * 1024 * 1024  # 300MB
+
+# 영상 길이 상한(초) — 파일·유튜브 공통. 초과분은 Modal self-timeout(870s)에 걸려 실패하므로
+# 입력 단계에서 거른다. web/Dropzone·IdleForm 표시와 동기화.
+MAX_VIDEO_DURATION_SEC = 300  # 5분
 
 
 class Settings(BaseSettings):
