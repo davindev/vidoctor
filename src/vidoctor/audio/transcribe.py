@@ -160,3 +160,31 @@ async def transcribe_video(media_path: str) -> tuple[list[Word], np.ndarray]:
         retry_bs = max(1, _load_models().batch_size // 2)
         _log.warning("ASR GPU OOM — batch_size=%d로 낮춰 1회 재시도", retry_bs)
         return await asyncio.to_thread(_transcribe_sync, media_path, retry_bs)
+
+
+# 언어 감지에는 본 ASR(KsponSpeech)이 아니라 작은 다국어 base 모델을 쓴다 — 한국어 특화
+# fine-tuning은 다국어 판별 정확도를 잃어 감지에 부적합하다. tiny는 가볍고 감지엔 충분하다.
+LANG_DETECT_MODEL = "tiny"
+
+
+@lru_cache(maxsize=1)
+def _load_lang_model() -> Any:
+    """언어 감지 전용 tiny 다국어 Whisper. 본 ASR과 별개로 lazy load·캐시."""
+    from faster_whisper import WhisperModel
+
+    device, compute_type, _ = _resolve_runtime()
+    return WhisperModel(LANG_DETECT_MODEL, device=device, compute_type=compute_type)
+
+
+async def detect_language(audio: np.ndarray) -> tuple[str, float]:
+    """16kHz mono 신호의 언어 (ISO 코드, 확신도) 추정. tiny 다국어 모델 기준.
+
+    transcribe가 디코딩한 audio를 재사용해 ffmpeg 디코드를 다시 하지 않는다. tiny의
+    detect_language는 신호 앞 30초만 보므로 가볍다. 호출자가 확신도 임계로 거부를 결정한다.
+    """
+
+    def _run() -> tuple[str, float]:
+        lang, prob, _ = _load_lang_model().detect_language(audio)
+        return lang, float(prob)
+
+    return await asyncio.to_thread(_run)

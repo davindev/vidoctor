@@ -25,14 +25,22 @@ _NO_AUDIO_MARKER = "does not contain any stream"
 _NO_TRANSCRIPT_MSG = (
     "영상에서 음성을 인식하지 못해 분석할 수 없습니다. 말소리가 또렷한 영상인지 확인해 주세요."
 )
+_FOREIGN_MSG = "한국어 음성만 분석할 수 있습니다. 한국어 영상을 올려주세요."
+# 비한국어로 '확신할' 때만 거부 — 음악·모호한 입력은 통과시켜 무음 게이트(빈 transcript)가
+# 처리하게 한다(외국어 오분류 방지). 한국어는 tiny가 확신 있게 잡아 오거부 위험이 낮다.
+_LANG_MIN_CONFIDENCE = 0.5
 
 
 async def transcribe(state: AnalysisState) -> dict:
-    from vidoctor.audio.transcribe import transcribe_video
+    from vidoctor.audio.transcribe import LANGUAGE, detect_language, transcribe_video
     from vidoctor.errors import SafeError
 
     try:
         words, audio = await transcribe_video(state["video_path"])
+        # 전사가 디코딩한 audio를 재사용해 언어 감지 — 비한국어면 결과를 버리고 중단.
+        lang, lang_prob = await detect_language(audio)
+        if lang != LANGUAGE and lang_prob >= _LANG_MIN_CONFIDENCE:
+            raise SafeError(_FOREIGN_MSG)
     except RuntimeError as e:
         if _NO_AUDIO_MARKER in str(e):
             raise SafeError(_NO_TRANSCRIPT_MSG) from e

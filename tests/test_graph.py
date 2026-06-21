@@ -27,6 +27,9 @@ def _stub_heavy_nodes(monkeypatch):
         # cps는 아래에서 stub하므로 audio 내용은 무관.
         return [Word(text="테스트", start=1.0, end=1.4)], np.array([], dtype=np.float32)
 
+    async def _ko_language(_audio):
+        return "ko", 0.99
+
     async def _empty_dead_zone(_path: str, _category, *, audio=None):
         return []
 
@@ -37,6 +40,7 @@ def _stub_heavy_nodes(monkeypatch):
         return []
 
     monkeypatch.setattr("vidoctor.audio.transcribe.transcribe_video", _dummy_words)
+    monkeypatch.setattr("vidoctor.audio.transcribe.detect_language", _ko_language)
     # cps는 dummy transcript/audio로 실제 F0 추출을 돌리지 않도록 stub (토폴로지 검증 목적).
     monkeypatch.setattr("vidoctor.audio.cps.detect_cps_anomalies", lambda *a, **k: [])
     monkeypatch.setattr(
@@ -98,6 +102,32 @@ async def test_empty_transcript_raises_no_speech(monkeypatch):
     g = build_graph()
     with pytest.raises(SafeError):
         await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
+
+
+async def test_foreign_language_is_rejected(monkeypatch):
+    """비한국어로 확신하면(prob≥0.5) 전사 전에 SafeError로 중단한다."""
+
+    async def _english(_audio):
+        return "en", 0.95
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.detect_language", _english)
+
+    g = build_graph()
+    with pytest.raises(SafeError):
+        await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
+
+
+async def test_low_confidence_language_passes(monkeypatch):
+    """비한국어여도 확신도가 낮으면(<0.5) 거부하지 않고 진행한다(음악·모호 입력 통과)."""
+
+    async def _uncertain(_audio):
+        return "en", 0.3
+
+    monkeypatch.setattr("vidoctor.audio.transcribe.detect_language", _uncertain)
+
+    g = build_graph()
+    result = await g.ainvoke({"video_path": "/tmp/x.mp4", "category": "lecture"})
+    assert "transcript" in result  # 게이트 통과 → 정상 진행
 
 
 async def test_detector_failure_is_isolated(monkeypatch):

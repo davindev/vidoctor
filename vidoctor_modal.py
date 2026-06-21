@@ -73,7 +73,8 @@ vidoctor_image = (
         "SUPABASE_SERVICE_KEY=dummy R2_ENDPOINT=https://x.r2.com R2_ACCESS_KEY_ID=dummy "
         "R2_SECRET_ACCESS_KEY=dummy R2_BUCKET=dummy LANGFUSE_PUBLIC_KEY=dummy "
         "LANGFUSE_SECRET_KEY=dummy LANGFUSE_HOST=https://x.langfuse.com "
-        "/app/.venv/bin/python -c 'from vidoctor.audio.transcribe import _load_models; _load_models()'",
+        "/app/.venv/bin/python -c 'from vidoctor.audio.transcribe import _load_models, "
+        "_load_lang_model; _load_models(); _load_lang_model()'",
     )
 )
 
