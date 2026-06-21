@@ -18,6 +18,10 @@ MAX_VIDEO_BYTES = 300 * 1024 * 1024  # 300MB
 # 입력 단계에서 거른다. web/Dropzone·IdleForm 표시와 동기화.
 MAX_VIDEO_DURATION_SEC = 300  # 5분
 
+# 영상 길이 하한(초). 이보다 짧으면 발화 표본이 부족해 모든 차원이 빈 결과를 내고(측정상
+# 5초=전 차원 0건), '발견 0건'이 '완벽한 영상'으로 오인된다. 입력 단계에서 거른다.
+MIN_VIDEO_DURATION_SEC = 10
+
 
 class Settings(BaseSettings):
     """OpenAI/Supabase/R2/Langfuse/MLflow 자격증명 + 호스트."""

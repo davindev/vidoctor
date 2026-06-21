@@ -25,7 +25,12 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from vidoctor.api.youtube import YouTubeIngestError, download_youtube
-from vidoctor.config import MAX_VIDEO_BYTES, MAX_VIDEO_DURATION_SEC, get_settings
+from vidoctor.config import (
+    MAX_VIDEO_BYTES,
+    MAX_VIDEO_DURATION_SEC,
+    MIN_VIDEO_DURATION_SEC,
+    get_settings,
+)
 from vidoctor.graph import Category
 from vidoctor.graph.state import (
     CATEGORY_DIMENSIONS,
@@ -434,7 +439,7 @@ async def _run_analyze(
                 # endpoint XOR 검증이 빠졌을 때만 닿는 invariant 위반.
                 raise RuntimeError("upload·url XOR invariant 위반")
             tmp_path, filename = await _save_upload_to_tmp(upload)
-            # 유튜브와 대칭으로 파일도 길이 검증 — 초과 영상은 R2 업로드 전에 거른다.
+            # 유튜브와 대칭으로 파일도 길이 검증 — 범위 밖 영상은 R2 업로드 전에 거른다.
             # 길이 미상(0)은 통과시킨다(드물고, Modal self-timeout이 backstop).
             duration = await asyncio.to_thread(probe_duration_sec, str(tmp_path))
             if duration > MAX_VIDEO_DURATION_SEC:
@@ -442,6 +447,14 @@ async def _run_analyze(
                 raise HTTPException(
                     status_code=400,
                     detail=f"영상이 너무 깁니다. {max_min}분 이내만 지원합니다.",
+                )
+            if 0 < duration < MIN_VIDEO_DURATION_SEC:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"영상이 너무 짧습니다. 최소 {MIN_VIDEO_DURATION_SEC}초 이상이어야 "
+                        "분석할 수 있습니다."
+                    ),
                 )
 
         # R2 키는 파일명 특수문자(따옴표·슬래시 등)가 새지 않도록 uuid 기반 안전 키로

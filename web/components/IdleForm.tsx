@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CATEGORY_CHOICE_LABEL, type CategoryChoice } from "@/lib/api";
 import type { AnalyzeSource } from "@/lib/analyze";
-import { Dropzone, MAX_MB, MAX_MINUTES } from "./Dropzone";
+import { Dropzone, MAX_MB, MAX_MINUTES, MIN_SECONDS } from "./Dropzone";
 import { ErrorBanner } from "./ErrorBanner";
 
 interface Props {
@@ -107,8 +107,8 @@ export function IdleForm({ disabled, lastError, onSubmit }: Props) {
             <span className="text-[14.5px] font-semibold">영상 입력</span>
             <span className="ml-auto text-xs text-ink-4">
               {mode === "file"
-                ? `최대 ${MAX_MB}MB · ${MAX_MINUTES}분`
-                : `최대 ${MAX_MINUTES}분`}
+                ? `최대 ${MAX_MB}MB · ${MIN_SECONDS}초~${MAX_MINUTES}분`
+                : `${MIN_SECONDS}초~${MAX_MINUTES}분`}
             </span>
           </div>
 
@@ -243,7 +243,7 @@ function UrlInput({
         />
       )}
       <p className="mt-2.5 text-[12.5px] leading-[1.7] text-ink-4">
-        최대 {MAX_MINUTES}분 · youtube.com / youtu.be 링크
+        {MIN_SECONDS}초~{MAX_MINUTES}분 · youtube.com / youtu.be 링크
       </p>
     </>
   );

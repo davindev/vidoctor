@@ -9,6 +9,9 @@ const MAX_BYTES = 300 * 1024 * 1024;
 export const MAX_MB = MAX_BYTES / (1024 * 1024);
 /** 영상 길이 상한(분) — 백엔드 config.MAX_VIDEO_DURATION_SEC(300s)와 동기화. */
 export const MAX_MINUTES = 5;
+/** 영상 길이 하한(초) — 백엔드 config.MIN_VIDEO_DURATION_SEC와 동기화. 이보다 짧으면
+ * 표본 부족으로 모든 차원이 빈 결과를 낸다. */
+export const MIN_SECONDS = 10;
 const ALLOWED_EXT = ["mp4", "mov", "mpeg4"];
 
 interface Props {
@@ -67,10 +70,15 @@ export function Dropzone({ file, disabled, onChange }: Props) {
       onChange(null);
       return;
     }
-    // 길이는 메타 로드가 필요해 비동기 — 너무 길면 큰 파일을 업로드하기 전에 막는다.
+    // 길이는 메타 로드가 필요해 비동기 — 범위 밖이면 큰 파일을 업로드하기 전에 막는다.
     const dur = await readDurationSec(f);
     if (dur !== null && dur > MAX_MINUTES * 60) {
       setError(`영상이 너무 깁니다. 최대 ${MAX_MINUTES}분까지 분석할 수 있습니다.`);
+      onChange(null);
+      return;
+    }
+    if (dur !== null && dur < MIN_SECONDS) {
+      setError(`영상이 너무 짧습니다. 최소 ${MIN_SECONDS}초 이상이어야 분석할 수 있습니다.`);
       onChange(null);
       return;
     }
@@ -146,7 +154,7 @@ export function Dropzone({ file, disabled, onChange }: Props) {
             파일을 끌어다 놓거나 <span className="font-semibold text-ink">파일 선택</span>
           </div>
           <div className="text-[12.5px] leading-[1.7] text-ink-4">
-            최대 {MAX_MB}MB · 최대 {MAX_MINUTES}분 · 지원 확장자 mp4, mov, mpeg4
+            최대 {MAX_MB}MB · {MIN_SECONDS}초~{MAX_MINUTES}분 · 지원 확장자 mp4, mov, mpeg4
           </div>
         </div>
       )}
